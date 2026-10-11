@@ -34,7 +34,7 @@ const LS_SEL = 'copiloto.sel.v2';
 const LS_AJ = 'copiloto.ajustes';
 
 const SENTIDOS = ['ida', 'vuelta'];
-const TIPOS = ['normal', 'division', 'rotonda'];
+const TIPOS = ['normal', 'division', 'rotonda', 'paso'];
 const ORD = ['', 'primera', 'segunda', 'tercera', 'cuarta', 'quinta', 'sexta', 'séptima', 'octava'];
 const FLECHAS = [
   ['recto', '↑ Seguir recto'],
@@ -301,9 +301,13 @@ function resolverPunto(p, destId, destinos) {
   return r;
 }
 
+// Puntos del recorrido para un destino (incluye los de paso)
+function puntosDelRecorrido(tramo, destId) {
+  return tramo.puntos.filter(p => !destId || !p.soloDestinos.length || p.soloDestinos.includes(destId));
+}
+// Puntos con aviso (los de paso solo sirven para trazar la ruta)
 function puntosParaNavegar(tramo, destId) {
-  return tramo.puntos
-    .filter(p => !destId || !p.soloDestinos.length || p.soloDestinos.includes(destId))
+  return puntosDelRecorrido(tramo, destId).filter(p => p.tipo !== 'paso')
     .map(p => resolverPunto(p, destId, tramo.destinos));
 }
 
@@ -323,9 +327,9 @@ function distancia(a, b) {
 }
 
 // Línea de la ruta: el trazado grabado (real) o la cadena de puntos (aproximada).
-function prepararGeometria(trazado, puntos) {
+function prepararGeometria(trazado, puntos, cadena) {
   const real = !!(trazado && trazado.length >= 2);
-  const linea = real ? trazado.map(([lat, lon]) => ({ lat, lon })) : puntos.map(p => ({ lat: p.lat, lon: p.lon }));
+  const linea = real ? trazado.map(([lat, lon]) => ({ lat, lon })) : (cadena || puntos).map(p => ({ lat: p.lat, lon: p.lon }));
   const lat0 = linea.length ? linea[0].lat : 9;
   const kx = R_T * RAD * Math.cos(lat0 * RAD), ky = R_T * RAD;
   const xy = linea.map(p => [p.lon * kx, p.lat * ky]);
@@ -349,7 +353,7 @@ function proyectar(geo, p, sCerca) {
       let t = L2 ? ((px - ax) * dx + (py - ay) * dy) / L2 : 0;
       t = clamp(t, 0, 1);
       const d = Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
-      if (d < best.d) best = { d, s: geo.cum[i] + t * Math.sqrt(L2) };
+      if (d < best.d) best = { d, s: geo.cum[i] + t * Math.sqrt(L2), lat: (ay + t * dy) / geo.ky, lon: (ax + t * dx) / geo.kx };
     }
     return best;
   };
@@ -569,6 +573,7 @@ function crearMapa(id) {
 }
 
 function iconoNumero(n, clase = '', tipo = 'normal') {
+  if (tipo === 'paso') return L.divIcon({ className: 'pin-paso ' + clase, html: '<span></span>', iconSize: [16, 16], iconAnchor: [8, 8] });
   const marca = tipo === 'rotonda' ? '⟳' : n;
   return L.divIcon({ className: 'pin-num ' + clase, html: `<span>${marca}</span>`, iconSize: [26, 26], iconAnchor: [13, 13] });
 }
@@ -607,7 +612,7 @@ function iniciarNavegacion(modo) {
   callarVoz();
   Object.assign(nav, {
     activo: true, modo, ruta, sentido: sel.sentido, tramo, destino: sel.destino, puntos,
-    geo: prepararGeometria(trazadoPara(tramo, sel.destino), puntos),
+    geo: prepararGeometria(trazadoSimulable(trazadoPara(tramo, sel.destino), puntos, modo), puntos, puntosDelRecorrido(tramo, sel.destino)),
     idx: -1, min: Infinity, alertas: {}, ultimoFix: null, sProg: null, sMax: -Infinity,
     contrario: false, completado: false
   });
@@ -627,6 +632,18 @@ function iniciarNavegacion(modo) {
   decir((modo === 'simulador' ? 'Simulación iniciada. ' : 'Copiloto activado. ') + (dest ? `Destino: ${dest}.` : ''));
   if (modo === 'simulador') iniciarSimulador();
   else iniciarGPS();
+}
+
+// En el simulador, si el primer aviso queda al inicio del trazado, agrega 1.2 km de entrada en línea recta
+// para que se escuche el aviso de 1 km (en la vía real el GPS ya viene de antes).
+function trazadoSimulable(trazado, puntos, modo) {
+  if (modo !== 'simulador' || !trazado || trazado.length < 2 || !puntos.length) return trazado;
+  const geo = prepararGeometria(trazado, puntos);
+  if (geo.sPuntos[0] > 1100) return trazado;
+  const ini = { lat: trazado[0][0], lon: trazado[0][1] };
+  const ref = interpolar(geo.linea, geo.cum, Math.min(100, geo.total));
+  const previo = puntoDesde(ini, rumbo(ref, ini), 1200);
+  return [[previo.lat, previo.lon], ...trazado];
 }
 
 function encabezadoHud(extra) {
@@ -830,14 +847,31 @@ function iniciarSimulador() {
   const cum = [0];
   for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + distancia(pts[i - 1], pts[i]));
   const total = cum[cum.length - 1];
-  const vel = Number($('sim-vel').value) / 3.6;
+  const vmax = Number($('sim-vel').value) / 3.6;
   const factor = Number($('sim-factor').value) || 1;
-  let s = 0, t = Date.now();
+
+  // Zonas lentas: rotondas (~25 km/h) y curvas (~50 km/h). Frena y acelera de forma gradual.
+  const simGeo = prepararGeometria(pts.map(p => [p.lat, p.lon]), nav.puntos);
+  const zonas = nav.puntos.map((p, i) => {
+    const sp = simGeo.sPuntos[i];
+    if (p.tipo === 'rotonda') return { desde: sp - 60, hasta: sp + 50, v: 25 / 3.6 };
+    if (p.flecha === 'curva') return { desde: sp - 100, hasta: sp + 500, v: 50 / 3.6 };
+    return null;
+  }).filter(Boolean);
+  const FRENO = 2.5, ACEL = 1.5; // m/s²
+  let s = 0, v = vmax, t = Date.now();
 
   nav.simTimer = setInterval(() => {
-    s += vel; t += 1000;
+    let objetivo = vmax;
+    zonas.forEach(z => {
+      if (z.v >= v && !(s >= z.desde && s <= z.hasta)) return;
+      const anticipo = Math.max(0, (v * v - z.v * z.v) / (2 * FRENO));
+      if (s >= z.desde - anticipo && s <= z.hasta) objetivo = Math.min(objetivo, z.v);
+    });
+    v = objetivo < v ? Math.max(objetivo, v - FRENO) : Math.min(objetivo, v + ACEL);
+    s += v; t += 1000;
     const p = interpolar(pts, cum, Math.min(s, total));
-    procesarFix({ lat: p.lat, lon: p.lon, speed: vel, acc: 5, t });
+    procesarFix({ lat: p.lat, lon: p.lon, speed: v, acc: 5, t });
     if (s >= total) { clearInterval(nav.simTimer); if (!nav.completado) completar(); }
   }, 1000 / factor);
 }
@@ -1063,9 +1097,9 @@ function renderEditor(ajustarMapa) {
   const lista = $('ed-lista'); lista.innerHTML = '';
   t.puntos.forEach((p, i) => {
     const li = document.createElement('li');
-    const num = document.createElement('span'); num.className = 'num'; num.textContent = p.tipo === 'rotonda' ? '⟳' : i + 1;
+    const num = document.createElement('span'); num.className = 'num'; num.textContent = p.tipo === 'rotonda' ? '⟳' : p.tipo === 'paso' ? '·' : i + 1;
     const nom = document.createElement('span'); nom.className = 'nom';
-    const etiqueta = p.tipo === 'rotonda' ? ' (rotonda)' : p.tipo === 'division' ? ' (división)' : '';
+    const etiqueta = p.tipo === 'rotonda' ? ' (rotonda)' : p.tipo === 'division' ? ' (división)' : p.tipo === 'paso' ? ' (paso)' : '';
     const solo = p.soloDestinos.length ? ` · solo ${p.soloDestinos.map(id => nombreDestino(t, id)).join(', ')}` : '';
     nom.textContent = `${i + 1}. ${p.nombre}${etiqueta}${solo}`;
     const acc = document.createElement('span'); acc.className = 'acc';
@@ -1260,6 +1294,98 @@ function guardarFormPunto(e) {
   guardarRutas();
   toast('Punto guardado');
   renderEditor(false);
+}
+
+/* ------------------------------------------------------------------ */
+/* Trazado por carretera (OSRM) y ajuste de puntos a la vía            */
+/* ------------------------------------------------------------------ */
+
+const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
+
+async function rutaOSRM(puntos) {
+  const coords = puntos.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join(';');
+  const ctrl = new AbortController(), to = setTimeout(() => ctrl.abort(), 30000);
+  let data;
+  try {
+    const res = await fetch(`${OSRM}${coords}?overview=full&geometries=geojson&continue_straight=true`, { signal: ctrl.signal });
+    data = await res.json();
+  } finally { clearTimeout(to); }
+  if (!data || data.code !== 'Ok' || !data.routes || !data.routes.length) throw new Error((data && (data.message || data.code)) || 'sin ruta');
+  const ruta = data.routes[0];
+  const c = ruta.geometry.coordinates.map(([lon, lat]) => [r6(lat), r6(lon)]);
+  const trazado = [c[0]];
+  for (let i = 1; i < c.length; i++) {
+    const u = trazado[trazado.length - 1];
+    if (i === c.length - 1 || distancia({ lat: u[0], lon: u[1] }, { lat: c[i][0], lon: c[i][1] }) >= 8) trazado.push(c[i]);
+  }
+  // Posibles desvíos: tramos mucho más largos por carretera que en línea recta
+  const desvios = [];
+  (ruta.legs || []).forEach((leg, i) => {
+    const recta = distancia(puntos[i], puntos[i + 1]);
+    if (leg.distance > recta * 1.7 + 400) desvios.push(`${puntos[i].nombre} → ${puntos[i + 1].nombre}`);
+  });
+  return { trazado, km: ruta.distance / 1000, min: ruta.duration / 60, desvios };
+}
+
+async function trazarPorCarretera() {
+  const t = tramoEd(), estado = $('ed-trazar-estado');
+  const conjuntos = [{ clave: '*', nombre: 'General', pts: t.puntos }];
+  t.destinos.forEach(d => {
+    const pts = puntosDelRecorrido(t, d.id);
+    if (pts.length !== t.puntos.length) conjuntos.push({ clave: d.id, nombre: d.nombre, pts });
+  });
+  const validos = conjuntos.filter(c => c.pts.length >= 2);
+  if (!validos.length) { alert('Hacen falta al menos 2 puntos en este sentido para trazar el camino.'); return; }
+  const reemplaza = validos.filter(c => t.trazados[c.clave]).map(c => c.nombre);
+  if (reemplaza.length && !confirm(`Se reemplazará el trazado: ${reemplaza.join(', ')}.\nSi lo grabaste manejando, ese es más exacto que el automático.\n\n¿Continuar?`)) return;
+
+  $('ed-trazar').disabled = true;
+  estado.textContent = 'Trazando el camino por carretera…';
+  const resumen = [], fallos = [], desvios = [];
+  for (const c of validos) {
+    try {
+      const r = await rutaOSRM(c.pts);
+      t.trazados[c.clave] = r.trazado;
+      resumen.push(`${c.nombre}: ${r.km.toFixed(1)} km (~${Math.round(r.min)} min)`);
+      desvios.push(...r.desvios);
+    } catch (e) { fallos.push(c.nombre); }
+  }
+  $('ed-trazar').disabled = false;
+  if (t.trazados['*']) ordenarPorTrazado(t, '*');
+  guardarRutas(); renderEditor(true);
+
+  const lejos = puntosLejosDeLaVia(t, 40);
+  let msg = resumen.length ? `✔ ${resumen.join(' · ')}. ` : '';
+  if (fallos.length) msg += `No se pudo trazar: ${fallos.join(', ')} (revisa tu conexión). `;
+  if ([...new Set(desvios)].length) msg += `⚠ Posible desvío entre: ${[...new Set(desvios)].join('; ')} — puede que un punto esté fuera de la vía principal. `;
+  if (lejos.length) msg += `⚠ Lejos de la vía: ${lejos.map(x => `${x.p.nombre} (${Math.round(x.d)} m)`).join(', ')}. `;
+  msg += 'Revisa en el mapa que el camino sea el tuyo; si se mete por otro lado, arrastra el punto a la vía correcta o agrega un punto de paso y traza de nuevo.';
+  estado.textContent = msg;
+}
+
+function puntosLejosDeLaVia(t, umbral) {
+  const traz = t.trazados['*'] || Object.values(t.trazados)[0];
+  if (!traz) return [];
+  const geo = prepararGeometria(traz, []);
+  return t.puntos.filter(p => p.tipo !== 'rotonda')
+    .map(p => ({ p, ...proyectar(geo, p) })).filter(x => x.d > umbral).map(x => ({ p: x.p, d: x.d }));
+}
+
+function ajustarPuntosAVia() {
+  const t = tramoEd();
+  const traz = t.trazados['*'] || Object.values(t.trazados)[0];
+  if (!traz) { alert('Primero traza o graba el camino de este sentido.'); return; }
+  const geo = prepararGeometria(traz, []);
+  let movidos = 0; const lejos = [];
+  t.puntos.forEach(p => {
+    if (p.tipo === 'rotonda') return; // el centro de una rotonda no está sobre la vía
+    const q = proyectar(geo, p);
+    if (q.d > 150) lejos.push(`${p.nombre} (${Math.round(q.d)} m)`);
+    else if (q.d > 3) { p.lat = r6(q.lat); p.lon = r6(q.lon); movidos++; }
+  });
+  guardarRutas(); renderEditor(false);
+  $('ed-trazar-estado').textContent = `${movidos} punto(s) movidos a la vía.` +
+    (lejos.length ? ` Demasiado lejos para moverlos solos (arrástralos tú): ${lejos.join(', ')}.` : '');
 }
 
 // Bloque del formulario para rotondas con geometría real
@@ -1696,6 +1822,8 @@ $('ed-ordenar').addEventListener('click', () => {
 });
 $('ed-crear-vuelta').addEventListener('click', crearVueltaDesdeIda);
 $('ed-osm').addEventListener('click', abrirPanelOSM);
+$('ed-trazar').addEventListener('click', trazarPorCarretera);
+$('ed-ajustar').addEventListener('click', ajustarPuntosAVia);
 $('osm-cerrar').addEventListener('click', cerrarPanelOSM);
 $('osm-buscar').addEventListener('click', buscarOSM);
 $('osm-agregar').addEventListener('click', agregarOSM);
