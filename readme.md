@@ -11,7 +11,7 @@ un diagrama de carriles y un texto grande.
 ```
 index.html        Interfaz: inicio, HUD, grabación y editor
 app.js            Motor: rutas, GPS, avisos, simulador, editor, rotondas OSM
-sw.js             Service Worker (v9): app sin conexión + caché del mapa ya visto
+sw.js             Service Worker (v10): app sin conexión + caché del mapa ya visto
 manifest.json     Instalación PWA
 icons/            íconos normales, maskable (Android), apple-touch y favicon
 lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
@@ -38,7 +38,12 @@ lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
   (E = entrada). Datos © colaboradores de OpenStreetMap (ODbL).
 - **Aplica a**: un punto puede limitarse a ciertos destinos (ej. una salida que solo usa quien va a Balboa).
   Con "General" se muestran todos los puntos con su instrucción general.
-- **Trazados**: cada sentido puede tener un trazado general y uno por destino (para los ramales después de una división).
+- **Trazados (camino por la vía)**: cada sentido puede tener un trazado general y uno por destino. Se obtienen de dos formas:
+  - **Grabado** manejando de acompañante (lo más exacto).
+  - **🛣️ Trazar por carretera**: pide a OSRM (rutas sobre OpenStreetMap) el camino por las calles entre los puntos, en orden,
+    para el general y para cada destino con puntos propios. Avisa de posibles desvíos y de puntos lejos de la vía.
+  - **📍 Ajustar puntos a la vía**: mueve sobre el trazado los puntos que están a menos de 150 m (no las rotondas).
+- **Punto de paso**: no da avisos; obliga al trazado a pasar por ahí (p. ej. por la Panamericana y no por la autopista).
 
 ## Cómo se usa
 
@@ -46,7 +51,7 @@ lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
    Toca **📍 Marcar aquí** en cada punto crítico. Al terminar se abre el editor.
 2. **Editar.** Elige Ida o Vuelta, agrega destinos y completa cada punto: tipo, "aplica a", instrucción general e
    instrucción por destino. "Crear vuelta a partir de la ida" copia los puntos en orden inverso para revisarlos.
-3. **Simular** a 60/80/100 km/h (×1, ×5, ×10).
+3. **Simular** a 60/80/100 km/h (×1, ×5, ×10). Sigue el trazado por la vía; frena a ~25 km/h en rotondas y ~50 km/h en curvas.
 4. **Conductor.** Teléfono en soporte. Por encima de 10 km/h los controles se bloquean; tocar la tarjeta repite el aviso.
 
 ## Lógica de navegación
@@ -82,7 +87,7 @@ lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
 }
 ```
 
-- `tipo`: `normal`, `division`, `rotonda`.
+- `tipo`: `normal`, `division`, `rotonda`, `paso`.
 - `flecha`: `recto`, `sal-izq`, `sal-der`, `izq`, `der`, `retorno`, `division`, `curva`.
 - `carriles` (izquierda a derecha): `O` = usar, `-` = evitar, `|` = separación.
 - `variantes`: por id de destino; cualquier campo vacío usa el general.
