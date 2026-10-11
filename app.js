@@ -655,6 +655,7 @@ function iniciarNavegacion(modo) {
   pedirWakeLock();
   const dest = ctx.tipo === 'viaje' ? viaje.destino.nombre : nombreDestino(tramo, destId);
   decir((modo === 'simulador' ? 'Simulación iniciada. ' : 'Copiloto activado. ') + (dest ? `Destino: ${dest}.` : ''));
+  $('sim-ctrl').hidden = modo !== 'simulador';
   if (modo === 'simulador') iniciarSimulador();
   else iniciarGPS();
 }
@@ -679,7 +680,7 @@ function encabezadoHud(extra) {
 
 function detenerNavegacion() {
   if (nav.watchId != null) navigator.geolocation.clearWatch(nav.watchId);
-  clearInterval(nav.simTimer);
+  clearInterval(sim.timer); sim.timer = null;
   Object.assign(nav, { activo: false, watchId: null, simTimer: null });
   callarVoz(); soltarWakeLock();
   document.body.classList.remove('bloqueado');
@@ -854,7 +855,7 @@ function evaluarPaso(f, dist, proj) {
   return false;
 }
 
-function procesarFix(f) {
+function procesarFix(f, opc = {}) {
   if (!nav.activo) return;
 
   let v = (typeof f.speed === 'number' && isFinite(f.speed)) ? f.speed : null;
@@ -903,7 +904,7 @@ function procesarFix(f) {
               : nav.contrario ? (nav.esViaje ? 'Sentido contrario: avisos en pausa' : `Sentido contrario: avisos en pausa (¿era ${otro}?)`)
               : !gpsOk ? 'GPS impreciso: avisos en pausa' : '';
 
-  if (!pausa) {
+  if (!pausa && !opc.silencio) {
     if (p.tipo === 'rotonda' && dist <= CFG.avisoEntrada && !al.entrada) {
       al.entrada = al.corto = al.largo = true;
       decir(p.entrada, { urgente: true, puntoId: p.id, aviso: true });
@@ -936,7 +937,7 @@ function procesarFix(f) {
 function completar() {
   if (nav.completado) return;
   nav.completado = true;
-  clearInterval(nav.simTimer);
+  if (nav.modo === 'simulador') { sim.pausado = true; actualizarControlesSim(); }
   marcarPinesHud();
   $('hud-dist').textContent = '✓';
   $('hud-nombre').textContent = nav.esViaje ? '¡Llegaste!' : 'Ruta completada';
@@ -958,6 +959,10 @@ $('hud-tarjeta').addEventListener('click', () => {
 /* Simulador                                                           */
 /* ------------------------------------------------------------------ */
 
+// Simulador por pasos de 100 ms: la "velocidad de reproducción" (factor) cambia en vivo.
+// Auto = rápido en tramos largos, más lento al acercarse y en tiempo real en cada maniobra.
+const sim = { timer: null, pausado: false, pts: null, cum: null, total: 0, s: 0, v: 0, vmax: 0, zonas: [], t: 0, factor: 'auto' };
+
 function iniciarSimulador() {
   const geo = nav.geo;
   let pts = geo.linea.map(p => ({ ...p }));
@@ -971,11 +976,7 @@ function iniciarSimulador() {
   }
   const cum = [0];
   for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + distancia(pts[i - 1], pts[i]));
-  const total = cum[cum.length - 1];
-  const vmax = Number($('sim-vel').value) / 3.6;
-  const factor = Number($('sim-factor').value) || 1;
-
-  // Zonas lentas: rotondas (~25 km/h) y curvas (~50 km/h). Frena y acelera de forma gradual.
+  // Zonas lentas del vehículo: rotondas (~25 km/h) y curvas (~50 km/h)
   const simGeo = prepararGeometria(pts.map(p => [p.lat, p.lon]), nav.puntos);
   const zonas = nav.puntos.map((p, i) => {
     const sp = simGeo.sPuntos[i];
@@ -983,24 +984,102 @@ function iniciarSimulador() {
     if (p.flecha === 'curva') return { desde: sp - 100, hasta: sp + 500, v: 50 / 3.6 };
     return null;
   }).filter(Boolean);
-  const FRENO = 2.5, ACEL = 1.5; // m/s²
-  let s = 0, v = vmax, t = Date.now();
-
-  nav.simTimer = setInterval(() => {
-    let objetivo = vmax;
-    zonas.forEach(z => {
-      if (z.v >= v && !(s >= z.desde && s <= z.hasta)) return;
-      const anticipo = Math.max(0, (v * v - z.v * z.v) / (2 * FRENO));
-      if (s >= z.desde - anticipo && s <= z.hasta) objetivo = Math.min(objetivo, z.v);
-    });
-    v = objetivo < v ? Math.max(objetivo, v - FRENO) : Math.min(objetivo, v + ACEL);
-    s += v; t += 1000;
-    const p = interpolar(pts, cum, Math.min(s, total));
-    const adelante = interpolar(pts, cum, Math.min(s + 25, total));
-    procesarFix({ lat: p.lat, lon: p.lon, speed: v, heading: rumbo(p, adelante), acc: 5, t });
-    if (s >= total) { clearInterval(nav.simTimer); if (!nav.completado) completar(); }
-  }, 1000 / factor);
+  const vmax = Number($('sim-vel').value) / 3.6;
+  const fInicial = $('sim-factor').value;
+  Object.assign(sim, { pts, cum, total: cum[cum.length - 1], zonas, vmax, s: 0, v: vmax, t: Date.now(), pausado: false,
+                       factor: fInicial === 'auto' ? 'auto' : Number(fInicial) });
+  clearInterval(sim.timer);
+  sim.timer = setInterval(pasoSimulador, 100);
+  $('sim-barra').max = Math.round(sim.total);
+  emitirFixSim(false);
+  actualizarControlesSim();
 }
+
+function factorSim() {
+  if (sim.factor !== 'auto') return sim.factor;
+  const d = nav.distActual;
+  if (d == null || !isFinite(d)) return 5;
+  if (d <= 400) return 1;      // maniobra cerca: tiempo real para verla bien
+  if (d <= 1500) return 3;
+  return 10;                   // tramo largo: adelanta
+}
+
+function pasoSimulador() {
+  if (sim.pausado || !nav.activo) return;
+  const dt = 0.1 * factorSim();
+  const FRENO = 2.5, ACEL = 1.5; // m/s²
+  let objetivo = sim.vmax;
+  sim.zonas.forEach(z => {
+    const anticipo = Math.max(0, (sim.v * sim.v - z.v * z.v) / (2 * FRENO));
+    if (sim.s >= z.desde - anticipo && sim.s <= z.hasta) objetivo = Math.min(objetivo, z.v);
+  });
+  sim.v = objetivo < sim.v ? Math.max(objetivo, sim.v - FRENO * dt) : Math.min(objetivo, sim.v + ACEL * dt);
+  sim.s = Math.min(sim.total, sim.s + sim.v * dt);
+  sim.t += dt * 1000;
+  emitirFixSim(false);
+  if (sim.s >= sim.total && !nav.completado) completar();
+  actualizarControlesSim();
+}
+
+function emitirFixSim(silencio) {
+  const p = interpolar(sim.pts, sim.cum, sim.s);
+  const adelante = interpolar(sim.pts, sim.cum, Math.min(sim.s + 25, sim.total));
+  const atras = interpolar(sim.pts, sim.cum, Math.max(sim.s - 25, 0));
+  const h = sim.s + 25 <= sim.total ? rumbo(p, adelante) : rumbo(atras, p);
+  procesarFix({ lat: p.lat, lon: p.lon, speed: sim.v, heading: h, acc: 5, t: sim.t }, { silencio });
+}
+
+// Saltar a otra posición (retroceder o adelantar): reinicia el progreso y los avisos desde ahí
+function irASim(s) {
+  sim.s = clamp(s, 0, sim.total);
+  Object.assign(nav, { idx: -1, min: Infinity, alertas: {}, sProg: null, sMax: -Infinity, contrario: false, completado: false, distActual: null });
+  callarVoz();
+  cam.a = null; cam.b = null; cam.ultimo = 0;     // la cámara salta, no se arrastra
+  emitirFixSim(true);                             // muestra dónde quedaste sin hablar
+  actualizarControlesSim();
+}
+
+function pausarSim(pausar) {
+  sim.pausado = pausar;
+  if (pausar) callarVoz();
+  else if (nav.completado || sim.s >= sim.total) irASim(0);   // al terminar, ▶ empieza de nuevo
+  actualizarControlesSim();
+}
+
+function actualizarControlesSim() {
+  if (nav.modo !== 'simulador') return;
+  $('sim-play').textContent = sim.pausado ? '▶' : '⏸';
+  $('sim-play').setAttribute('aria-label', sim.pausado ? 'Reanudar' : 'Pausar');
+  if (!arrastrandoBarra) $('sim-barra').value = Math.round(sim.s);
+  $('sim-km').textContent = `${(sim.s / 1000).toFixed(1)} km`;
+  $('sim-total').textContent = `de ${(sim.total / 1000).toFixed(1)} km`;
+  const f = sim.factor === 'auto' ? `Auto ×${factorSim()}` : `×${sim.factor === 0.5 ? '½' : sim.factor}`;
+  $('sim-factor-txt').textContent = f;
+  $('sim-lento').disabled = factorSim() <= 0.5;
+  $('sim-rapido').disabled = factorSim() >= 20;
+}
+
+const PASOS = [0.5, 1, 2, 5, 10, 20];
+function cambiarFactor(dir) {
+  const actual = factorSim();
+  if (dir > 0) sim.factor = PASOS.find(x => x > actual) || 20;
+  else sim.factor = [...PASOS].reverse().find(x => x < actual) || 0.5;
+  actualizarControlesSim();
+}
+
+let arrastrandoBarra = false;
+$('sim-play').addEventListener('click', () => pausarSim(!sim.pausado));
+$('sim-atras').addEventListener('click', () => irASim(sim.s - 300));
+$('sim-adelante').addEventListener('click', () => irASim(sim.s + 300));
+$('sim-lento').addEventListener('click', () => cambiarFactor(-1));
+$('sim-rapido').addEventListener('click', () => cambiarFactor(1));
+$('sim-factor-txt').addEventListener('click', () => { sim.factor = 'auto'; actualizarControlesSim(); });
+$('sim-barra').addEventListener('input', e => {
+  arrastrandoBarra = true;
+  if (!sim.pausado) pausarSim(true);   // deslizar pausa la simulación
+  irASim(Number(e.target.value));
+});
+$('sim-barra').addEventListener('change', () => { arrastrandoBarra = false; actualizarControlesSim(); });
 
 /* ------------------------------------------------------------------ */
 /* Grabar ruta (modo acompañante)                                      */
