@@ -11,7 +11,7 @@ un diagrama de carriles y un texto grande.
 ```
 index.html        Interfaz: inicio, HUD, grabación y editor
 app.js            Motor: rutas, GPS, avisos, simulador, editor, rotondas OSM
-sw.js             Service Worker (v14): app sin conexión + caché del mapa ya visto
+sw.js             Service Worker (v15): app sin conexión + caché del mapa ya visto
 manifest.json     Instalación PWA
 icons/            íconos normales, maskable (Android), apple-touch y favicon
 lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
@@ -39,7 +39,10 @@ limitada a Panamá. Las rutas personalizadas del editor siguen en **⭐ Mis ruta
 - **Rumbo arriba**: el mapa gira para que la dirección de avance quede siempre hacia arriba; el carro es una flecha
   fija en la parte baja de la pantalla (se ve más vía por delante). El botón **🧭** alterna con **Norte arriba**.
 - **Movimiento suave**: entre una lectura de GPS (o del simulador) y la siguiente, el carro y el mapa se animan cuadro a cuadro.
-- **Zoom según velocidad**: más cerca en ciudad (<35 km/h), más lejos en autopista (>75 km/h).
+- **Zoom automático**: según velocidad (más cerca en ciudad, más lejos en autopista) y **de cerca al llegar a cada
+  maniobra** (~300 m; nivel 18 en rotondas). Botones **＋/－** (hasta nivel 19) y **AUTO** para volver al automático;
+  se ocultan con el carro en movimiento en modo conductor.
+- **Vista previa**: el mapa se mueve y hace zoom; tocar una maniobra de la lista la muestra de cerca; "↩ Ver ruta completa".
 - Hecho con CSS sobre Leaflet (sin complementos de terceros). Los textos del mapa giran con él (son imágenes).
 
 ## Conceptos

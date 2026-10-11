@@ -2,7 +2,7 @@
 // App: red primero (con límite de 3 s) para recibir actualizaciones; si no hay señal, usa la caché.
 // Mapa (OpenStreetMap): se reusa lo ya visto; no se descargan zonas completas.
 
-const APP_CACHE = 'copiloto-app-v14';
+const APP_CACHE = 'copiloto-app-v15';
 const TILE_CACHE = 'copiloto-osm-v1';
 const TILE_MAX_DIAS = 7; // las reglas de OpenStreetMap piden reusar lo ya visto al menos 7 días
 

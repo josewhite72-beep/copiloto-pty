@@ -703,7 +703,8 @@ function iniciarGPS() {
 
 // ---- Cámara del HUD: el mapa gira con el rumbo y el carro (flecha) avanza suave sobre la vía
 let rumboArriba = leerLS('copiloto.rumboArriba', true) !== false;
-const cam = { a: null, b: null, t0: 0, dur: 0, ultimo: 0, raf: null, zoom: 16, zoomPend: 0 };
+const cam = { a: null, b: null, t0: 0, dur: 0, ultimo: 0, raf: null, zoom: 16, zoomPend: 0, manual: null };
+const zoomCam = () => cam.manual != null ? cam.manual : cam.zoom;
 
 function ajustarMapaHud() {
   const wrap = $('hud-mapa-wrap'), el = $('map-hud');
@@ -720,7 +721,8 @@ function prepararMapaHud() {
     ['dragging', 'touchZoom', 'doubleClickZoom', 'scrollWheelZoom', 'boxZoom', 'keyboard'].forEach(h => mapaHud[h] && mapaHud[h].disable());
     if (mapaHud.tap) mapaHud.tap.disable();
   }
-  Object.assign(cam, { a: null, b: null, t0: 0, dur: 0, ultimo: 0, zoom: 16, zoomPend: 0 });
+  Object.assign(cam, { a: null, b: null, t0: 0, dur: 0, ultimo: 0, zoom: 16, zoomPend: 0, manual: null });
+  actualizarBotonesZoom();
   $('hud-auto').hidden = true;
   $('map-hud').style.setProperty('--rot', '0deg'); $('map-hud').style.setProperty('--h', '0deg');
   $('btn-brujula').textContent = rumboArriba ? '🧭 Rumbo' : '🧭 Norte';
@@ -759,10 +761,16 @@ function moverAuto(f, v, proj) {
   cam.a = poseActual() || { lat: f.lat, lon: f.lon, h };
   cam.b = { lat: f.lat, lon: f.lon, h };
   cam.t0 = ahora;
-  // Zoom según velocidad (con un poco de paciencia para no saltar)
+  // Zoom automático: según la velocidad, y de cerca al llegar a una maniobra (más en rotondas).
+  // Acercarse es inmediato; alejarse espera unas lecturas para no saltar.
   if (v != null) {
-    const kmh = v * 3.6, z = kmh < 35 ? 17 : kmh < 75 ? 16 : 15;
-    if (z !== cam.zoom) { if (++cam.zoomPend >= 3) { cam.zoom = z; cam.zoomPend = 0; } } else cam.zoomPend = 0;
+    const kmh = v * 3.6;
+    let z = kmh < 35 ? 17 : kmh < 75 ? 16 : 15;
+    const p = puntoActual();
+    if (p && nav.distActual != null && nav.distActual <= 300 && nav.distActual > -30) z = Math.max(z, p.tipo === 'rotonda' ? 18 : 17);
+    if (z > cam.zoom) { cam.zoom = z; cam.zoomPend = 0; }
+    else if (z < cam.zoom) { if (++cam.zoomPend >= 3) { cam.zoom = z; cam.zoomPend = 0; } }
+    else cam.zoomPend = 0;
   }
   if (!cam.raf) cam.raf = requestAnimationFrame(animarCamara);
 }
@@ -775,19 +783,32 @@ function animarCamara() {
   const wrap = $('hud-mapa-wrap'), el = $('map-hud');
   if (rumboArriba) {
     const off = wrap.clientHeight * 0.27;                                   // el carro va abajo: se ve más vía por delante
-    const mpp = 156543.03392 * Math.cos(pose.lat * RAD) / 2 ** cam.zoom;
+    const mpp = 156543.03392 * Math.cos(pose.lat * RAD) / 2 ** zoomCam();
     const c = puntoDesde(pose, pose.h, off * mpp);
-    mapaHud.setView([c.lat, c.lon], cam.zoom, { animate: false });
+    mapaHud.setView([c.lat, c.lon], zoomCam(), { animate: false });
     el.style.setProperty('--rot', `${-pose.h}deg`); el.style.setProperty('--h', `${pose.h}deg`);
     wrap.style.setProperty('--off', `${off}px`); wrap.style.setProperty('--auto-rot', '0deg');
   } else {
-    mapaHud.setView([pose.lat, pose.lon], cam.zoom, { animate: false });
+    mapaHud.setView([pose.lat, pose.lon], zoomCam(), { animate: false });
     el.style.setProperty('--rot', '0deg'); el.style.setProperty('--h', '0deg');
     wrap.style.setProperty('--off', '0px'); wrap.style.setProperty('--auto-rot', `${pose.h}deg`);
   }
   $('hud-auto').hidden = false;
   if (performance.now() - cam.t0 < cam.dur + 30) cam.raf = requestAnimationFrame(animarCamara);
 }
+
+function actualizarBotonesZoom() {
+  $('hud-zoom-auto').hidden = cam.manual == null;
+  $('hud-zoom-mas').disabled = zoomCam() >= 19;
+  $('hud-zoom-menos').disabled = zoomCam() <= 12;
+}
+function zoomManual(delta) {
+  cam.manual = clamp(zoomCam() + delta, 12, 19);
+  actualizarBotonesZoom(); animarCamara();
+}
+$('hud-zoom-mas').addEventListener('click', () => zoomManual(1));
+$('hud-zoom-menos').addEventListener('click', () => zoomManual(-1));
+$('hud-zoom-auto').addEventListener('click', () => { cam.manual = null; actualizarBotonesZoom(); animarCamara(); });
 
 $('btn-brujula').addEventListener('click', () => {
   rumboArriba = !rumboArriba; escribirLS('copiloto.rumboArriba', rumboArriba);
@@ -897,6 +918,7 @@ function procesarFix(f) {
     }
   }
 
+  nav.distActual = dist;
   $('hud-progreso').textContent = encabezadoHud(`${nav.idx + 1}/${pts.length}`);
   $('hud-dist').textContent = fmtDist(dist);
   $('hud-nombre').textContent = p.nombre;
@@ -2337,6 +2359,16 @@ function renderPrevia() {
       : (p.carrilTexto || p.corta));
     tx.append(b, sub);
     li.append(ic, tx);
+    li.tabIndex = 0; li.setAttribute('role', 'button');
+    li.title = 'Ver de cerca en el mapa';
+    const verDeCerca = () => {
+      previa.mapa.setView([p.lat, p.lon], p.tipo === 'rotonda' ? 18 : 17);
+      ol.querySelectorAll('li.sel').forEach(x => x.classList.remove('sel')); li.classList.add('sel');
+      $('btn-ver-todo').hidden = false;
+      $('map-previa').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+    li.addEventListener('click', verDeCerca);
+    li.addEventListener('keydown', e => { if (e.key === 'Enter') verDeCerca(); });
     ol.appendChild(li);
   });
   $('previa-maniobras').hidden = !puntos.length;
@@ -2346,9 +2378,9 @@ function renderPrevia() {
   // Mapa
   if (!previa.mapa) {
     previa.mapa = crearMapa('map-previa');
-    previa.mapa.dragging.disable(); previa.mapa.touchZoom.disable(); previa.mapa.doubleClickZoom.disable();
-    previa.mapa.scrollWheelZoom.disable(); previa.mapa.boxZoom.disable(); previa.mapa.keyboard.disable();
-    if (previa.mapa.tap) previa.mapa.tap.disable();
+    previa.mapa.scrollWheelZoom.disable(); previa.mapa.boxZoom.disable();   // se mueve con el dedo y se acerca con ＋/－ o pellizco
+    L.control.zoom({ position: 'topright', zoomInTitle: 'Acercar', zoomOutTitle: 'Alejar' }).addTo(previa.mapa);
+    previa.mapa.setMaxZoom(19);
   }
   if (previa.capa) previa.capa.remove();
   previa.capa = L.layerGroup().addTo(previa.mapa);
@@ -2359,10 +2391,11 @@ function renderPrevia() {
     L.circleMarker([viaje.origen.lat, viaje.origen.lon], { radius: 8, color: '#fff', weight: 3, fillColor: '#2f8cff', fillOpacity: 1, interactive: false }).addTo(previa.capa);
     L.circleMarker([viaje.destino.lat, viaje.destino.lon], { radius: 9, color: '#fff', weight: 3, fillColor: '#ff3b3b', fillOpacity: 1, interactive: false }).addTo(previa.capa);
   }
+  previa.limites = L.latLngBounds(ll.length ? ll : puntos.map(p => [p.lat, p.lon]));
+  $('btn-ver-todo').hidden = true;
   setTimeout(() => {
     previa.mapa.invalidateSize();
-    const bnds = L.latLngBounds(ll.length ? ll : puntos.map(p => [p.lat, p.lon]));
-    if (bnds.isValid()) previa.mapa.fitBounds(bnds, { padding: [18, 18], maxZoom: 15 });
+    if (previa.limites.isValid()) previa.mapa.fitBounds(previa.limites, { padding: [18, 18], maxZoom: 15 });
   }, 60);
 }
 
@@ -2414,6 +2447,11 @@ $('sug-origen').addEventListener('click', () => {
 });
 $('btn-favorito').addEventListener('click', alternarFavorito);
 $('btn-repasar').addEventListener('click', repasarRuta);
+$('btn-ver-todo').addEventListener('click', () => {
+  if (previa.limites && previa.limites.isValid()) previa.mapa.fitBounds(previa.limites, { padding: [18, 18], maxZoom: 15 });
+  $('previa-lista').querySelectorAll('li.sel').forEach(x => x.classList.remove('sel'));
+  $('btn-ver-todo').hidden = true;
+});
 $('btn-conductor').addEventListener('click', () => { if (repasando) repasarRuta(); iniciarNavegacion('conductor'); });
 $('btn-simular').addEventListener('click', () => { if (repasando) repasarRuta(); iniciarNavegacion('simulador'); });
 $('btn-detener').addEventListener('click', detenerNavegacion);
