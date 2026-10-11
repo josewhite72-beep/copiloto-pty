@@ -187,7 +187,8 @@ function normalizarRotGeo(g) {
   }));
   const entrada = Number.isInteger(g.entrada) && g.entrada >= 0 && g.entrada < conexiones.length && conexiones[g.entrada].entrada
     ? g.entrada : null;
-  return { osm: String(g.osm || ''), L: Math.max(1, Number(g.L) || 1), radio: Number(g.radio) || 20, conexiones, entrada };
+  const centro = isFinite(Number(g.lat)) && isFinite(Number(g.lon)) && g.lat != null ? { lat: Number(g.lat), lon: Number(g.lon) } : {};
+  return { osm: String(g.osm || ''), L: Math.max(1, Number(g.L) || 1), radio: Number(g.radio) || 20, conexiones, entrada, ...centro };
 }
 
 // Salidas en el orden en que se encuentran al circular, empezando después de la entrada.
@@ -447,9 +448,18 @@ function svgRotonda(salida, total, rotGeo) {
     const [x1, y1] = pt(a, r + 5), [x2, y2] = pt(a, R);
     return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="${ancho}" stroke-linecap="round"/>`;
   };
-  let s = `<svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="${r}" fill="none" stroke="${gris}" stroke-width="11"/>`;
+  let s = `<svg viewBox="-15 -15 130 130" aria-hidden="true"><circle cx="50" cy="50" r="${r}" fill="none" stroke="${gris}" stroke-width="11"/>`;
   otras.forEach(a => { s += brazo(a, gris, 5); });
   angulos.forEach((a, k) => { if (k + 1 !== elegida && Math.abs(a - 270) > 1) s += brazo(a, gris, 9); });
+  // Número de cada salida al final de su brazo (la que hay que tomar, en verde)
+  const insignias = angulos.map((a, k) => {
+    const ang = Math.abs(a - 270) <= 1 ? 270 + 342 : a;   // el retorno se dibuja justo al lado de la entrada
+    const [bx, by] = pt(ang, R + 6);
+    const ok = k + 1 === elegida;
+    return `<circle cx="${bx}" cy="${by}" r="${ok ? 10 : 8}" fill="${ok ? 'currentColor' : '#2b2b2b'}" stroke="${ok ? '#fff' : '#666'}" stroke-width="2"/>` +
+           `<text x="${bx}" y="${by + 0.5}" text-anchor="middle" dominant-baseline="central" font-size="${ok ? 13 : 11}" font-weight="900" ` +
+           `fill="${ok ? '#000' : '#ccc'}" font-family="system-ui, sans-serif">${k + 1}</text>`;
+  }).join('');
   s += `<line x1="50" y1="97" x2="50" y2="${50 + r + 4}" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>`;
   if (elegida) {
     let span = (((angulos[elegida - 1] - 270) % 360) + 360) % 360;
@@ -462,7 +472,9 @@ function svgRotonda(salida, total, rotGeo) {
     const px = Math.sin(a * RAD) * 10, py = Math.cos(a * RAD) * 10;
     s += `<polygon points="${tx},${ty} ${(bx + px).toFixed(1)},${(by + py).toFixed(1)} ${(bx - px).toFixed(1)},${(by - py).toFixed(1)}" fill="currentColor"/>`;
     s += `<text x="50" y="51" text-anchor="middle" dominant-baseline="central" font-size="26" font-weight="900" fill="currentColor" font-family="system-ui, sans-serif">${elegida}</text>`;
+    s += insignias;
   } else {
+    s += insignias;
     s += `<text x="50" y="51" text-anchor="middle" dominant-baseline="central" font-size="24" font-weight="900" fill="${gris}" font-family="system-ui, sans-serif">?</text>`;
   }
   return s + '</svg>';
@@ -820,6 +832,47 @@ $('btn-brujula').addEventListener('click', () => {
 function marcarPinesHud() {
   marcadoresHud.forEach((m, i) =>
     m.setIcon(iconoNumero(i + 1, i < nav.idx ? 'pasado' : i === nav.idx ? 'actual' : '', nav.puntos[i].tipo)));
+  mostrarSalidasHud();
+}
+
+// Globos sobre cada salida real de la rotonda que viene: la que hay que tomar, grande y en verde
+let salidasHud = null;
+function globosSalidas(p, clase) {
+  const g = p.rotGeo, sal = salidasDe(g);
+  if (!sal.length) return [];
+  const c = g.lat != null ? { lat: g.lat, lon: g.lon } : p;
+  return sal.map((x, k) => {
+    const q = puntoDesde(c, x.rumbo, g.radio + 24 + (x.i === g.entrada ? 14 : 0));
+    const ok = k + 1 === p.salida;
+    const icon = L.divIcon({ className: `pin-salida-ruta ${clase} ${ok ? 'objetivo' : ''}`, html: `<span>${k + 1}</span>`,
+                             iconSize: ok ? [34, 34] : [24, 24], iconAnchor: ok ? [17, 17] : [12, 12] });
+    const m = L.marker([q.lat, q.lon], { icon, keyboard: false, interactive: false, zIndexOffset: ok ? 900 : 800 });
+    m.salida = { k: k + 1, rumbo: x.rumbo };
+    return m;
+  });
+}
+function mostrarSalidasHud() {
+  if (salidasHud) { salidasHud.remove(); salidasHud = null; }
+  const p = puntoActual();
+  if (!p || p.tipo !== 'rotonda' || !p.rotGeo || !mapaHud) return;
+  salidasHud = L.layerGroup(globosSalidas(p, 'en-hud')).addTo(mapaHud);
+  nav.salidasPasadas = 0;
+}
+// Mientras se da la vuelta, las salidas que ya pasaste se marcan con ✓
+function actualizarSalidasPasadas(f) {
+  const p = puntoActual();
+  if (!salidasHud || !p || !p.rotGeo) return;
+  const g = p.rotGeo, c = g.lat != null ? { lat: g.lat, lon: g.lon } : p;
+  if (distancia(f, c) > g.radio + 35) return;
+  const e = g.conexiones[g.entrada];
+  const recorrido = ((e.rumbo - rumbo(c, f)) % 360 + 360) % 360;          // grados avanzados en sentido antihorario
+  if (recorrido > 345) return;                                             // ruido en la entrada: aún no se avanza
+  salidasHud.eachLayer(m => {
+    const desdeEntrada = ((e.rumbo - m.salida.rumbo) % 360 + 360) % 360 || 360;
+    const pasada = m.salida.k < p.salida && recorrido > desdeEntrada + 8;
+    const el = m.getElement && m.getElement();
+    if (el) { el.classList.toggle('pasada', pasada); el.querySelector('span').textContent = pasada ? '✓' : m.salida.k; }
+  });
 }
 
 function indiceInicial(f, proj) {
@@ -836,6 +889,16 @@ function distanciaAlPunto(f, proj) {
   return nav.geo.real ? nav.geo.sPuntos[nav.idx] - proj.s : distancia(f, nav.puntos[nav.idx]);
 }
 
+// Metros después del punto para darlo por pasado. En una rotonda (el punto está en la entrada)
+// se espera a recorrer el anillo hasta la salida, para seguir guiando mientras se da la vuelta.
+function margenPaso(p) {
+  if (!p || p.tipo !== 'rotonda' || !p.rotGeo || !p.salida) return 15;
+  const g = p.rotGeo, x = salidasDe(g)[p.salida - 1], e = g.conexiones[g.entrada];
+  if (!x || !e) return 15;
+  const ang = ((e.rumbo - x.rumbo) % 360 + 360) % 360 || 360;
+  return g.radio * ang * RAD + 30;
+}
+
 // ¿Ya pasamos el punto actual? También detecta el sentido contrario.
 function evaluarPaso(f, dist, proj) {
   if (nav.geo.real) {
@@ -843,7 +906,7 @@ function evaluarPaso(f, dist, proj) {
     if (proj.s < nav.sMax - 150) nav.contrario = true;
     else if (proj.s >= nav.sMax - 20) nav.contrario = false;
     if (nav.idx === nav.puntos.length - 1 && dist < 20) return true; // llegó al último punto (el destino)
-    return dist < -15;
+    return dist < -margenPaso(nav.puntos[nav.idx]);
   }
   nav.min = Math.min(nav.min, dist);
   if (nav.min < CFG.pasadoRadio && dist > nav.min + CFG.pasadoMargen) return true;
@@ -920,8 +983,9 @@ function procesarFix(f, opc = {}) {
   }
 
   nav.distActual = dist;
+  actualizarSalidasPasadas(f);
   $('hud-progreso').textContent = encabezadoHud(`${nav.idx + 1}/${pts.length}`);
-  $('hud-dist').textContent = fmtDist(dist);
+  $('hud-dist').textContent = dist <= 5 ? 'Ahora' : fmtDist(dist);
   $('hud-nombre').textContent = p.nombre;
   pintarDibujo($('hud-flecha'), p);
   const cerca = dist <= CFG.avisoLargo && !pausa;
@@ -1653,12 +1717,15 @@ function nombreVia(tags) {
 }
 
 async function consultarOverpass(bbox) {
-  const q = `[out:json][timeout:40];way["junction"~"^(roundabout|circular)$"]["highway"](${bbox.map(n => n.toFixed(5)).join(',')})->.r;` +
-            'node(w.r)->.n;way(bn.n)["highway"]->.c;(.r;.c;);out geom tags;';
+  return consultarOverpassQ(`[out:json][timeout:40];way["junction"~"^(roundabout|circular)$"]["highway"](${bbox.map(n => n.toFixed(5)).join(',')})->.r;` +
+            'node(w.r)->.n;way(bn.n)["highway"]->.c;(.r;.c;);out geom tags;');
+}
+
+async function consultarOverpassQ(q, msMax = 45000) {
   let ultimo;
   for (const url of OVERPASS) {
     try {
-      const ctrl = new AbortController(), to = setTimeout(() => ctrl.abort(), 45000);
+      const ctrl = new AbortController(), to = setTimeout(() => ctrl.abort(), msMax);
       const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q),
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: ctrl.signal });
       clearTimeout(to);
@@ -2236,7 +2303,54 @@ async function calcularRutaViaje(origen, destino) {
   const tramo = normalizarTramo({ nombre: `Hacia ${destino.nombre}`, destinos: [], trazados: { '*': trazado },
                                   duraciones: { '*': ruta.duration / 60 }, puntos }, 'Viaje');
   ordenarPorTrazado(tramo, '*');
+  try { await enriquecerRotondas(tramo); } catch (e) { /* sin datos de rotondas: se usan los de la ruta */ }
   return { origen, destino, tramo, creado: Date.now() };
+}
+
+// Trae de OpenStreetMap la forma real de cada rotonda de la ruta y, con el camino trazado,
+// averigua por qué calle se entra y por cuál se sale: así se numeran e iluminan las salidas reales.
+async function enriquecerRotondas(tramo) {
+  const rots = tramo.puntos.filter(p => p.tipo === 'rotonda' && !p.rotGeo).slice(0, 25);
+  const traz = tramo.trazados['*'];
+  if (!rots.length || !traz) return;
+  const partes = rots.map(p => `way["junction"~"^(roundabout|circular)$"]["highway"](around:80,${p.lat.toFixed(6)},${p.lon.toFixed(6)});`).join('');
+  const q = `[out:json][timeout:20];(${partes})->.r;node(w.r)->.n;way(bn.n)["highway"]->.c;(.r;.c;);out geom tags;`;
+  const lista = analizarRotondas(await consultarOverpassQ(q, 12000));
+  if (!lista.length) return;
+  const geo = prepararGeometria(traz, []);
+  rots.forEach(p => {
+    const r = lista.filter(x => distancia(x.centro, p) < x.radio + 70).sort((a, b) => distancia(a.centro, p) - distancia(b.centro, p))[0];
+    if (!r) return;
+    const cruce = cruceDeRotonda(geo, r, proyectar(geo, p).s);
+    if (!cruce) return;
+    const g = normalizarRotGeo({ osm: r.osm, L: r.L, radio: r.radio, conexiones: r.conexiones, lat: r.centro.lat, lon: r.centro.lon,
+                                 entrada: adivinarEntrada({ conexiones: r.conexiones }, r.centro, cruce.antes) });
+    if (!g || g.entrada == null) return;
+    // La salida que toma la ruta: la calle de salida con el rumbo más parecido al del camino al salir
+    const bs = rumbo(r.centro, cruce.despues);
+    const cand = g.conexiones.map((c, i) => ({ c, i })).filter(o => o.c.salida);
+    if (!cand.length) return;
+    const tomada = cand.reduce((m, o) => difAng(o.c.rumbo, bs) < difAng(m.c.rumbo, bs) ? o : m);
+    const k = salidasDe(g).findIndex(c => c.i === tomada.i) + 1;
+    if (k < 1) return;
+    p.rotGeo = g;
+    p.salida = k;
+    if (!p.calle || /sin nombre/i.test(p.calle)) p.calle = tomada.c.nombre;
+  });
+}
+
+// Puntos del camino justo antes de entrar al anillo y justo después de salir
+function cruceDeRotonda(geo, r, sAprox) {
+  const desde = Math.max(0, sAprox - 200), hasta = Math.min(geo.total, sAprox + 600);
+  const tramoLinea = [];
+  for (let s = desde; s <= hasta; s += 5) tramoLinea.push(interpolar(geo.linea, geo.cum, s));
+  const c = { lat: r.centro.lat, lon: r.centro.lon }, dentro = r.radio + 12, fuera = r.radio + 30;
+  const iEntra = tramoLinea.findIndex(x => distancia(x, c) < dentro);
+  if (iEntra < 0) return null;
+  let antes = null, despues = null;
+  for (let i = iEntra - 1; i >= 0; i--) if (distancia(tramoLinea[i], c) > fuera) { antes = tramoLinea[i]; break; }
+  for (let i = iEntra + 1; i < tramoLinea.length; i++) if (distancia(tramoLinea[i], c) > fuera) { despues = tramoLinea[i]; break; }
+  return antes && despues ? { antes, despues } : null;
 }
 
 async function calcularViaje(e) {
@@ -2466,6 +2580,9 @@ function renderPrevia() {
   const ll = geo.linea.map(p => [p.lat, p.lon]);
   if (ll.length >= 2) L.polyline(ll, traz ? { color: '#00ff66', weight: 5, opacity: .8 } : { color: '#00ff66', weight: 3, opacity: .6, dashArray: '6 10' }).addTo(previa.capa);
   puntos.forEach((p, i) => L.marker([p.lat, p.lon], { icon: iconoNumero(i + 1, '', p.tipo), keyboard: false, interactive: false }).addTo(previa.capa));
+  puntos.filter(p => p.tipo === 'rotonda' && p.rotGeo).forEach(p => globosSalidas(p, 'en-previa').forEach(m => m.addTo(previa.capa)));
+  const verGlobos = () => $('map-previa').classList.toggle('lejos', previa.mapa.getZoom() < 16);
+  previa.mapa.off('zoomend', verGlobos); previa.mapa.on('zoomend', verGlobos); verGlobos();
   if (ctx.tipo === 'viaje') {
     L.circleMarker([viaje.origen.lat, viaje.origen.lon], { radius: 8, color: '#fff', weight: 3, fillColor: '#2f8cff', fillOpacity: 1, interactive: false }).addTo(previa.capa);
     L.circleMarker([viaje.destino.lat, viaje.destino.lon], { radius: 9, color: '#fff', weight: 3, fillColor: '#ff3b3b', fillOpacity: 1, interactive: false }).addTo(previa.capa);

@@ -11,7 +11,7 @@ un diagrama de carriles y un texto grande.
 ```
 index.html        Interfaz: inicio, HUD, grabación y editor
 app.js            Motor: rutas, GPS, avisos, simulador, editor, rotondas OSM
-sw.js             Service Worker (v16): app sin conexión + caché del mapa ya visto
+sw.js             Service Worker (v17): app sin conexión + caché del mapa ya visto
 manifest.json     Instalación PWA
 icons/            íconos normales, maskable (Android), apple-touch y favicon
 lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
@@ -48,6 +48,15 @@ limitada a Panamá. Las rutas personalizadas del editor siguen en **⭐ Mis ruta
   a menos de 400 m de cada maniobra o rotonda. Toca el indicador para volver a Auto. Al terminar, ▶ empieza de nuevo.
 - **Vista previa**: el mapa se mueve y hace zoom; tocar una maniobra de la lista la muestra de cerca; "↩ Ver ruta completa".
 - Hecho con CSS sobre Leaflet (sin complementos de terceros). Los textos del mapa giran con él (son imágenes).
+
+## Rotondas: salidas numeradas
+
+Al calcular una ruta, la app consulta en OpenStreetMap la forma real de cada rotonda del camino y, con el trazado,
+deduce por qué calle se entra y por cuál se sale (si difiere del número que da el servicio de rutas, manda la geometría real).
+- El dibujo de la maniobra numera todas las salidas e ilumina en verde la que hay que tomar.
+- En el mapa aparecen globos sobre cada salida real; la tuya, grande y en verde. Al dar la vuelta, las que pasas se marcan ✓.
+- La rotonda sigue activa hasta que sales por tu salida (no al entrar al anillo).
+- En la vista previa, los globos se ven al acercar el mapa (tocar la maniobra).
 
 ## Conceptos
 
