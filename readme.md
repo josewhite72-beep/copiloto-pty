@@ -11,7 +11,7 @@ un diagrama de carriles y un texto grande.
 ```
 index.html        Interfaz: inicio, HUD, grabación y editor
 app.js            Motor: rutas, GPS, avisos, simulador, editor, rotondas OSM
-sw.js             Service Worker (v17): app sin conexión + caché del mapa ya visto
+sw.js             Service Worker (v18): app sin conexión + caché del mapa ya visto
 manifest.json     Instalación PWA
 icons/            íconos normales, maskable (Android), apple-touch y favicon
 lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
@@ -56,6 +56,8 @@ deduce por qué calle se entra y por cuál se sale (si difiere del número que d
 - El dibujo de la maniobra numera todas las salidas e ilumina en verde la que hay que tomar.
 - En el mapa aparecen globos sobre cada salida real; la tuya, grande y en verde. Al dar la vuelta, las que pasas se marcan ✓.
 - La rotonda sigue activa hasta que sales por tu salida (no al entrar al anillo).
+- A 60 m o menos de cualquier maniobra (y dentro de la rotonda) el letrero rojo se reduce a una línea
+  ("3.ª SALIDA · AV. …") y se ocultan los carriles, para dejar ver la maniobra en el mapa.
 - En la vista previa, los globos se ven al acercar el mapa (tocar la maniobra).
 
 ## Conceptos

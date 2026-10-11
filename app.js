@@ -15,6 +15,7 @@ const CFG = {
   avisoLargo: 1000,        // m: primer aviso de voz
   avisoCorto: 250,         // m: aviso urgente
   avisoEntrada: 40,        // m: aviso al entrar a una rotonda
+  letreroCompacto: 60,     // m: desde aquí el letrero rojo se reduce a una línea
   pasadoRadio: 400,        // (sin trazado) el punto se considera pasado si estuvo a menos de esto...
   pasadoMargen: 60,        // ...y luego se alejó esta cantidad
   fueraRuta: 200,          // (con trazado) m de separación para "fuera de ruta"
@@ -989,10 +990,14 @@ function procesarFix(f, opc = {}) {
   $('hud-nombre').textContent = p.nombre;
   pintarDibujo($('hud-flecha'), p);
   const cerca = dist <= CFG.avisoLargo && !pausa;
-  $('hud-carriles').innerHTML = cerca ? htmlCarriles(p.carriles) : '';
+  // A 60 m o menos (y dentro de la rotonda) el letrero se encoge a una línea para dejar ver la maniobra en el mapa
+  const compacta = cerca && dist <= CFG.letreroCompacto;
+  $('hud-carriles').innerHTML = cerca && !compacta ? htmlCarriles(p.carriles) : '';
   const alerta = $('hud-alerta');
-  alerta.textContent = p.carrilTexto;
-  alerta.className = 'hud-alerta' + (cerca && p.carrilTexto ? ' visible' : '') + (dist <= CFG.avisoCorto ? ' urgente' : '');
+  alerta.textContent = compacta && p.tipo === 'rotonda' && p.salida
+    ? `${p.salida}.ª SALIDA${p.calleSalida ? ' · ' + p.calleSalida.toUpperCase() : ''}`
+    : p.carrilTexto;
+  alerta.className = 'hud-alerta' + (cerca && p.carrilTexto ? ' visible' : '') + (dist <= CFG.avisoCorto ? ' urgente' : '') + (compacta ? ' compacta' : '');
   const banner = $('hud-banner');
   banner.textContent = pausa;
   banner.className = 'hud-banner' + (pausa ? ' visible' : '');

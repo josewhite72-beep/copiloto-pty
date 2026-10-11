@@ -99,6 +99,9 @@
       background: var(--amarillo); color: #000; }
     .hud-alerta.visible { display: block; }
     .hud-alerta.urgente { background: var(--rojo); color: #fff; animation: pulso 1.2s infinite; }
+    .hud-alerta { transition: font-size .25s ease, padding .25s ease, border-radius .25s ease; }
+    .hud-alerta.compacta { font-size: 15px; padding: 6px 14px; border-radius: 999px; white-space: nowrap; overflow: hidden;
+      text-overflow: ellipsis; animation: none; }
     @keyframes pulso { 50% { transform: scale(1.015); } }
     .hud-banner { display: none; font-size: 15px; font-weight: 700; padding: 10px; border-radius: 10px; text-align: center;
       background: #3a2a00; color: var(--amarillo); border: 1px solid #6b5000; }
