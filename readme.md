@@ -11,7 +11,7 @@ un diagrama de carriles y un texto grande.
 ```
 index.html        Interfaz: inicio, HUD, grabación y editor
 app.js            Motor: rutas, GPS, avisos, simulador, editor, rotondas OSM
-sw.js             Service Worker (v10): app sin conexión + caché del mapa ya visto
+sw.js             Service Worker (v11): app sin conexión + caché del mapa ya visto
 manifest.json     Instalación PWA
 icons/            íconos normales, maskable (Android), apple-touch y favicon
 lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
@@ -44,6 +44,12 @@ lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
     para el general y para cada destino con puntos propios. Avisa de posibles desvíos y de puntos lejos de la vía.
   - **📍 Ajustar puntos a la vía**: mueve sobre el trazado los puntos que están a menos de 150 m (no las rotondas).
 - **Punto de paso**: no da avisos; obliga al trazado a pasar por ahí (p. ej. por la Panamericana y no por la autopista).
+
+- **Vista previa** (inicio): al elegir ruta, sentido y destino se ve un mapa con el camino, el resumen (km, minutos,
+  rotondas, divisiones, curvas), la lista de maniobras como se verán al manejar, avisos de lo que falta (salidas sin
+  elegir, camino en línea recta, puntos lejos de la vía) y **🔊 Repasar en voz alta** para escuchar la ruta antes de salir.
+- **Cualquier lugar del país**: funciona en toda Panamá (y fuera). La búsqueda de rotondas a lo largo de la ruta se hace
+  por tramos de ~13 km, así que sirve para rutas largas (p. ej. David → Ciudad). Para rutas largas, traza primero por carretera.
 
 ## Cómo se usa
 

@@ -220,7 +220,9 @@ function normalizarTramo(t, nombreDef) {
     p.soloDestinos = p.soloDestinos.filter(id => ids.has(id));
     Object.keys(p.variantes).forEach(k => { if (!ids.has(k)) delete p.variantes[k]; });
   });
-  return { nombre: String(t.nombre || nombreDef), destinos, trazados, puntos };
+  const duraciones = {};
+  Object.entries(t.duraciones || {}).forEach(([k, v]) => { if (trazados[k] && Number(v) > 0) duraciones[k] = Number(v); });
+  return { nombre: String(t.nombre || nombreDef), destinos, trazados, duraciones, puntos };
 }
 
 function normalizarRuta(r) {
@@ -890,7 +892,7 @@ function iniciarGrabacion() {
   if (!confirm(`Modo acompañante: úsalo solo si NO vas manejando.\n\nSe grabará "${tramo.nombre}"` +
                (dest ? ` (trazado hacia ${dest})` : '') +
                '. En cada punto crítico toca "Marcar aquí". ¿Continuar?')) return;
-  Object.assign(grab, { activo: true, traza: [], marcas: [], ultimoFix: null, dist: 0, sentido: sel.sentido, destino: sel.destino });
+  Object.assign(grab, { activo: true, traza: [], marcas: [], ultimoFix: null, dist: 0, sentido: sel.sentido, destino: sel.destino, inicio: Date.now() });
   $('grab-titulo').textContent = `🎙️ ${tramo.nombre}${dest ? ' · ' + dest : ''}`;
   mostrarPantalla('pantalla-grabar');
   if (!grab.mapa) grab.mapa = crearMapa('map-grabar');
@@ -957,13 +959,13 @@ function terminarGrabacion() {
     rutaDestino = ruta; tramoDestino = tramo;
     const base = tramo.puntos.length;
     grab.marcas.forEach((m, i) => tramo.puntos.push(puntoNuevo(m.lat, m.lon, `Punto ${base + i + 1}`)));
-    if (trazado) tramo.trazados[clave] = trazado;
+    if (trazado) { tramo.trazados[clave] = trazado; tramo.duraciones[clave] = (Date.now() - grab.inicio) / 60000; }
   } else {
     const fecha = new Date().toLocaleDateString('es-PA', { day: '2-digit', month: 'short' });
     rutaDestino = normalizarRuta({ id: uid(), nombre: `Ruta grabada ${fecha}`, ida: { nombre: 'Ida' }, vuelta: { nombre: 'Vuelta' } });
     tramoDestino = rutaDestino[grab.sentido];
     tramoDestino.puntos = grab.marcas.map((m, i) => puntoNuevo(m.lat, m.lon, `Punto ${i + 1}`));
-    if (trazado) tramoDestino.trazados['*'] = trazado;
+    if (trazado) { tramoDestino.trazados['*'] = trazado; tramoDestino.duraciones['*'] = (Date.now() - grab.inicio) / 60000; }
     rutas.push(rutaDestino);
   }
   ordenarPorTrazado(tramoDestino, rutaDestino === ruta ? clave : '*');
@@ -1046,7 +1048,7 @@ function renderEditor(ajustarMapa) {
     li.append(`${k === '*' ? 'General' : 'Hacia ' + nombreDestino(t, k)}: ${t.trazados[k].length} puntos GPS`,
       boton('Borrar', 'Borrar trazado', () => {
         if (!confirm('¿Borrar este trazado? Los puntos se conservan.')) return;
-        delete t.trazados[k]; guardarRutas(); renderEditor(true);
+        delete t.trazados[k]; delete t.duraciones[k]; guardarRutas(); renderEditor(true);
       }));
     ul.appendChild(li);
   });
@@ -1124,7 +1126,7 @@ function eliminarDestino(id) {
   const t = tramoEd();
   if (!confirm(`¿Eliminar el destino "${nombreDestino(t, id)}"? Se borran sus instrucciones propias y su trazado.`)) return;
   t.destinos = t.destinos.filter(d => d.id !== id);
-  delete t.trazados[id];
+  delete t.trazados[id]; delete t.duraciones[id];
   t.puntos.forEach(p => { delete p.variantes[id]; p.soloDestinos = p.soloDestinos.filter(x => x !== id); });
   if (sel.destino === id) sel.destino = '';
   validarSel(); guardarRutas(); renderEditor(false);
@@ -1345,7 +1347,7 @@ async function trazarPorCarretera() {
   for (const c of validos) {
     try {
       const r = await rutaOSRM(c.pts);
-      t.trazados[c.clave] = r.trazado;
+      t.trazados[c.clave] = r.trazado; t.duraciones[c.clave] = r.min;
       resumen.push(`${c.nombre}: ${r.km.toFixed(1)} km (~${Math.round(r.min)} min)`);
       desvios.push(...r.desvios);
     } catch (e) { fallos.push(c.nombre); }
@@ -1526,6 +1528,24 @@ function analizarRotondas(data) {
   return res;
 }
 
+// Divide el corredor de una o varias líneas en cajas pequeñas (~10–15 km) para consultar por partes
+function cajasCorredor(lineas, margen) {
+  const cajas = [];
+  lineas.forEach(linea => {
+    const muestras = densificar(linea, 400);
+    let caja = null;
+    muestras.forEach(p => {
+      const nueva = caja ? [Math.min(caja[0], p.lat), Math.min(caja[1], p.lon), Math.max(caja[2], p.lat), Math.max(caja[3], p.lon)]
+                         : [p.lat, p.lon, p.lat, p.lon];
+      if (caja && ((nueva[2] - nueva[0]) > 0.12 || (nueva[3] - nueva[1]) > 0.12)) {
+        cajas.push(caja); caja = [p.lat, p.lon, p.lat, p.lon];
+      } else caja = nueva;
+    });
+    if (caja) cajas.push(caja);
+  });
+  return cajas.map(c => [c[0] - margen, c[1] - margen, c[2] + margen, c[3] + margen]);
+}
+
 function lineasTramo(t) {
   const l = Object.values(t.trazados).map(tr => tr.map(([lat, lon]) => ({ lat, lon })));
   if (t.puntos.length) l.push(t.puntos.map(p => ({ lat: p.lat, lon: p.lon })));
@@ -1549,24 +1569,32 @@ function cerrarPanelOSM() {
 
 async function buscarOSM() {
   const t = tramoEd(), zona = $('osm-zona').value, estado = $('osm-estado');
-  let bbox;
+  let cajas;
   if (zona === 'ruta') {
-    const todos = lineasTramo(t).flat();
-    if (!todos.length) { alert('Este sentido no tiene puntos ni trazado. Usa "El área visible del mapa".'); return; }
-    const lats = todos.map(p => p.lat), lons = todos.map(p => p.lon), m = 0.006;
-    bbox = [Math.min(...lats) - m, Math.min(...lons) - m, Math.max(...lats) + m, Math.max(...lons) + m];
+    // Corredor de la ruta dividido en tramos (sirve para rutas largas, p. ej. David → Ciudad)
+    const traz = trazadoPara(t, '');
+    const lineas = traz ? Object.values(t.trazados).map(tr => tr.map(([lat, lon]) => ({ lat, lon }))) : lineasTramo(t);
+    if (!lineas.flat().length) { alert('Este sentido no tiene puntos ni trazado. Usa "El área visible del mapa".'); return; }
+    cajas = cajasCorredor(lineas, 0.006);
+    if (cajas.length > 60) { alert('La ruta es demasiado larga para buscar de una vez. Divídela en rutas más cortas.'); return; }
   } else {
     const b = ed.mapa.getBounds();
-    bbox = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()];
+    cajas = [[b.getSouth(), b.getWest(), b.getNorth(), b.getEast()]];
+    if ((cajas[0][2] - cajas[0][0]) * (cajas[0][3] - cajas[0][1]) > 0.15) {
+      alert('La zona es muy grande. Acerca el mapa a la parte que te interesa (por ejemplo, Tumba Muerto o San Miguelito) y busca de nuevo.');
+      return;
+    }
   }
-  if ((bbox[2] - bbox[0]) * (bbox[3] - bbox[1]) > 0.15) {
-    alert('La zona es muy grande. Acerca el mapa a la parte que te interesa (por ejemplo, Tumba Muerto o San Miguelito) y busca de nuevo.');
-    return;
-  }
-  estado.textContent = 'Consultando OpenStreetMap…';
   $('osm-buscar').disabled = true;
-  let lista;
-  try { lista = analizarRotondas(await consultarOverpass(bbox)); }
+  let lista = [];
+  try {
+    const vistos = new Set();
+    for (let i = 0; i < cajas.length; i++) {
+      estado.textContent = cajas.length > 1 ? `Consultando OpenStreetMap… tramo ${i + 1} de ${cajas.length}` : 'Consultando OpenStreetMap…';
+      analizarRotondas(await consultarOverpass(cajas[i])).forEach(r => { if (!vistos.has(r.osm)) { vistos.add(r.osm); lista.push(r); } });
+      if (i < cajas.length - 1) await new Promise(res => setTimeout(res, 700)); // no saturar el servicio público
+    }
+  }
   catch (e) { estado.textContent = 'No se pudo consultar OpenStreetMap. Revisa tu conexión a internet e inténtalo de nuevo.'; return; }
   finally { $('osm-buscar').disabled = false; }
 
@@ -1750,8 +1778,104 @@ function renderInicio() {
   $('sel-destino').disabled = !t.destinos.length;
   const n = puntosParaNavegar(t, sel.destino).length;
   const real = !!trazadoPara(t, sel.destino);
-  $('ruta-info').textContent = `${n} punto(s) · ${real ? 'trazado grabado' : 'trazado aproximado'} · ` +
+  $('ruta-info').textContent = `${n} punto(s) · ${real ? 'camino por la vía' : 'camino aproximado (línea recta)'} · ` +
                                (r.verificada ? '✔ verificada' : '⚠ sin verificar');
+  renderPrevia();
+}
+
+/* ------------------------------------------------------------------ */
+/* Vista previa de la ruta (inicio)                                    */
+/* ------------------------------------------------------------------ */
+
+const previa = { mapa: null, capa: null, puntos: [] };
+
+function renderPrevia() {
+  const r = rutaSel(), t = r[sel.sentido], dest = sel.destino;
+  const puntos = puntosParaNavegar(t, dest);
+  previa.puntos = puntos;
+  const traz = trazadoPara(t, dest);
+  const geo = prepararGeometria(traz, puntos, puntosDelRecorrido(t, dest));
+  const clave = traz ? (dest && t.trazados[dest] ? dest : '*') : null;
+
+  // Resumen
+  const cuenta = (f) => puntos.filter(f).length;
+  const nRot = cuenta(p => p.tipo === 'rotonda'), nDiv = cuenta(p => p.tipo === 'division'), nCurva = cuenta(p => p.tipo === 'normal' && p.flecha === 'curva');
+  const partes = [];
+  if (geo.total) partes.push(`${traz ? '' : '≈ '}${(geo.total / 1000).toFixed(1)} km${traz ? '' : ' en línea recta'}`);
+  if (clave && t.duraciones[clave]) partes.push(`~${Math.round(t.duraciones[clave])} min`);
+  if (nRot) partes.push(`${nRot} rotonda${nRot > 1 ? 's' : ''}`);
+  if (nDiv) partes.push(nDiv > 1 ? `${nDiv} divisiones` : '1 división');
+  if (nCurva) partes.push(`${nCurva} zona${nCurva > 1 ? 's' : ''} de curvas`);
+  $('previa-resumen').textContent = puntos.length ? partes.join(' · ') : 'Sin puntos en este sentido.';
+
+  // Alertas de lo que falta
+  const alertas = [];
+  if (puntos.length && !traz) alertas.push('Sin camino por la vía: las distancias son en línea recta. En el editor, toca "Trazar por carretera" o graba la ruta.');
+  if (!dest && t.destinos.length && nRot) alertas.push('Elige un destino para ver qué salida tomar en cada rotonda.');
+  puntos.filter(p => p.tipo === 'rotonda').forEach(p => {
+    const orig = t.puntos.find(x => x.id === p.id);
+    if (orig && orig.rotGeo && orig.rotGeo.entrada == null) alertas.push(`${p.nombre}: falta definir por dónde se entra.`);
+    else if (!p.salida && (dest || !t.destinos.length)) alertas.push(`${p.nombre}: falta elegir la salida${dest ? ' para este destino' : ''}.`);
+  });
+  if (traz) {
+    const lejos = puntos.filter(p => p.tipo !== 'rotonda').map(p => ({ p, d: proyectar(geo, p).d })).filter(x => x.d > 60);
+    if (lejos.length) alertas.push(`Lejos del camino: ${lejos.map(x => `${x.p.nombre} (${Math.round(x.d)} m)`).join(', ')}.`);
+  }
+  if (!r.verificada) alertas.push('Ruta sin verificar: revisa los puntos en la vía antes de confiar en ella.');
+  const ca = $('previa-alertas'); ca.innerHTML = '';
+  alertas.forEach(a => { const d = document.createElement('div'); d.className = 'previa-alerta'; d.textContent = '⚠ ' + a; ca.appendChild(d); });
+
+  // Lista de maniobras
+  const ol = $('previa-lista'); ol.innerHTML = '';
+  puntos.forEach((p, i) => {
+    const li = document.createElement('li');
+    const ic = document.createElement('div'); ic.className = 'hud-flecha'; pintarDibujo(ic, p);
+    const tx = document.createElement('div'); tx.className = 'previa-tx';
+    const km = isFinite(geo.sPuntos[i]) ? `km ${(Math.max(0, geo.sPuntos[i]) / 1000).toFixed(1)} · ` : '';
+    const b = document.createElement('b'); b.textContent = `${i + 1}. ${p.nombre}`;
+    const sub = document.createElement('span');
+    sub.textContent = km + (p.tipo === 'rotonda'
+      ? (p.salida ? `${cap(ORD[p.salida])} salida${p.calleSalida ? ', por ' + p.calleSalida : ''}` : 'Salida sin definir')
+      : (p.carrilTexto || p.corta));
+    tx.append(b, sub);
+    li.append(ic, tx);
+    ol.appendChild(li);
+  });
+  $('previa-maniobras').hidden = !puntos.length;
+  $('previa-cuenta').textContent = `Ver maniobras (${puntos.length})`;
+  $('btn-repasar').disabled = !puntos.length;
+
+  // Mapa
+  if (!previa.mapa) {
+    previa.mapa = crearMapa('map-previa');
+    previa.mapa.dragging.disable(); previa.mapa.touchZoom.disable(); previa.mapa.doubleClickZoom.disable();
+    previa.mapa.scrollWheelZoom.disable(); previa.mapa.boxZoom.disable(); previa.mapa.keyboard.disable();
+    if (previa.mapa.tap) previa.mapa.tap.disable();
+  }
+  if (previa.capa) previa.capa.remove();
+  previa.capa = L.layerGroup().addTo(previa.mapa);
+  const ll = geo.linea.map(p => [p.lat, p.lon]);
+  if (ll.length >= 2) L.polyline(ll, traz ? { color: '#00ff66', weight: 5, opacity: .8 } : { color: '#00ff66', weight: 3, opacity: .6, dashArray: '6 10' }).addTo(previa.capa);
+  puntos.forEach((p, i) => L.marker([p.lat, p.lon], { icon: iconoNumero(i + 1, '', p.tipo), keyboard: false, interactive: false }).addTo(previa.capa));
+  setTimeout(() => {
+    previa.mapa.invalidateSize();
+    const bnds = L.latLngBounds(ll.length ? ll : puntos.map(p => [p.lat, p.lon]));
+    if (bnds.isValid()) previa.mapa.fitBounds(bnds, { padding: [18, 18], maxZoom: 15 });
+  }, 60);
+}
+
+let repasando = false;
+function repasarRuta() {
+  if (repasando) { callarVoz(); repasando = false; $('btn-repasar').textContent = '🔊 Repasar en voz alta'; return; }
+  const t = rutaSel()[sel.sentido], dest = nombreDestino(t, sel.destino);
+  callarVoz();
+  repasando = true; $('btn-repasar').textContent = '⏹ Detener repaso';
+  decir(`Repaso de la ruta ${t.nombre}${dest ? ', destino ' + dest : ''}. ${previa.puntos.length} puntos.`);
+  previa.puntos.forEach((p, i) => decir(`Punto ${i + 1}, ${p.nombre}. ${p.corta}`));
+  decir('Fin del repaso.');
+  const vigilar = setInterval(() => {
+    if (!voz.hablando && !voz.cola.length) { clearInterval(vigilar); repasando = false; $('btn-repasar').textContent = '🔊 Repasar en voz alta'; }
+  }, 500);
 }
 
 function cargarVoces() {
@@ -1773,8 +1897,9 @@ $('sel-ruta').addEventListener('change', e => { sel.rutaId = e.target.value; sel
   sel.sentido = e.currentTarget.dataset.sentido; sel.destino = ''; renderInicio();
 }));
 $('sel-destino').addEventListener('change', e => { sel.destino = e.target.value; renderInicio(); });
-$('btn-conductor').addEventListener('click', () => iniciarNavegacion('conductor'));
-$('btn-simular').addEventListener('click', () => iniciarNavegacion('simulador'));
+$('btn-repasar').addEventListener('click', repasarRuta);
+$('btn-conductor').addEventListener('click', () => { if (repasando) repasarRuta(); iniciarNavegacion('conductor'); });
+$('btn-simular').addEventListener('click', () => { if (repasando) repasarRuta(); iniciarNavegacion('simulador'); });
 $('btn-detener').addEventListener('click', detenerNavegacion);
 $('btn-grabar').addEventListener('click', iniciarGrabacion);
 $('btn-marcar').addEventListener('click', marcarAqui);

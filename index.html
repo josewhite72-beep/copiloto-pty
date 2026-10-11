@@ -160,6 +160,18 @@
     .variante input, .variante select, .variante textarea { background: var(--bg); }
     .seccion { margin: 14px 0 0; font-size: 15px; color: var(--verde); }
     [hidden] { display: none !important; }
+    .previa-cab { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 8px; }
+    .previa-cab .info { margin: 0; }
+    .mapa-previa { flex: none; height: 190px; min-height: 0; }
+    .previa-alerta { margin-top: 8px; font-size: 13px; color: var(--amarillo); background: #2a2200; border: 1px solid #4d3d00;
+      border-radius: 8px; padding: 6px 9px; }
+    #previa-maniobras { margin-top: 10px; }
+    #previa-maniobras summary { cursor: pointer; font-weight: 700; font-size: 15px; }
+    .previa-lista { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 6px; }
+    .previa-lista li { display: flex; gap: 10px; align-items: center; background: var(--panel2); border-radius: 10px; padding: 6px 8px; }
+    .previa-lista .hud-flecha { width: 38px; height: 38px; flex: 0 0 38px; }
+    .previa-tx { min-width: 0; display: flex; flex-direction: column; font-size: 14px; }
+    .previa-tx span { color: var(--suave); font-size: 13px; overflow-wrap: anywhere; }
     .osm-lista { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
     .osm-lista label { display: flex; gap: 10px; align-items: flex-start; background: var(--panel2); border: 1px solid var(--borde);
       border-radius: 10px; padding: 8px 10px; font-size: 14px; cursor: pointer; }
@@ -203,6 +215,17 @@
       <label class="etq" for="sel-destino">Destino</label>
       <select id="sel-destino"></select>
       <p id="ruta-info" class="info"></p>
+    </div>
+
+    <div class="tarjeta previa">
+      <div class="previa-cab"><b>Vista previa</b><span id="previa-resumen" class="info"></span></div>
+      <div id="map-previa" class="mapa mapa-previa"></div>
+      <div id="previa-alertas"></div>
+      <details id="previa-maniobras">
+        <summary id="previa-cuenta">Ver maniobras</summary>
+        <ol id="previa-lista" class="previa-lista"></ol>
+      </details>
+      <div class="fila-wrap"><button id="btn-repasar" class="btn-mini">🔊 Repasar en voz alta</button></div>
     </div>
 
     <button id="btn-conductor" class="btn btn-verde">🚗 Iniciar como conductor</button>
