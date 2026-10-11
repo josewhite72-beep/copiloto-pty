@@ -1928,7 +1928,7 @@ function ubicacionActual() {
     if (!navigator.geolocation) return reject(new Error('sin GPS'));
     navigator.geolocation.getCurrentPosition(
       pos => { ultimaUbicacion = { lat: pos.coords.latitude, lon: pos.coords.longitude }; resolve(ultimaUbicacion); },
-      reject, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
+      reject, { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 });
   });
 }
 
@@ -2087,17 +2087,29 @@ async function calcularViaje(e) {
   } finally { $('btn-calcular').disabled = false; }
 }
 
+// Invertir = preparar la vuelta: sale de donde estás ahora y llega al punto de partida.
+// Si planeas la vuelta desde otro lugar, el botón "Salir desde …" usa el destino anterior como salida.
+let sugerenciaOrigen = null;
+function mostrarSugerenciaOrigen(l) {
+  sugerenciaOrigen = l;
+  $('sug-origen').hidden = !l;
+  if (l) $('sug-origen').textContent = `↺ Salir desde ${l.nombre}`;
+}
+
 function invertirViaje() {
-  const tO = $('in-origen').value, tD = $('in-destino').value;
-  let nuevoDestino = formViaje.origen, nuevoOrigen = formViaje.destino;
-  let textoDestino = tO;
-  if (!tO.trim() && viaje && viaje.origen.gps) {   // salías de tu ubicación: la vuelta llega a ese punto
-    nuevoDestino = { ...viaje.origen, nombre: 'Punto de partida anterior', gps: false };
-    textoDestino = nuevoDestino.nombre;
-  }
-  $('in-origen').value = tD; $('in-destino').value = textoDestino;
-  formViaje.origen = nuevoOrigen; formViaje.destino = nuevoDestino;
-  estadoViaje(textoDestino ? 'Origen y destino invertidos: toca "Calcular ruta".' : 'Escribe a dónde vas.');
+  const tO = $('in-origen').value.trim(), tD = $('in-destino').value.trim();
+  // A dónde vuelves: el origen anterior (escrito, o tu ubicación de cuando calculaste la ida)
+  let vuelta = tO ? (formViaje.origen && formViaje.origen.nombre === tO ? formViaje.origen : null) : null;
+  if (!tO && viaje && viaje.origen.gps) vuelta = { ...viaje.origen, nombre: 'Punto de partida', gps: false };
+  // De dónde venías: el destino anterior (para el botón "Salir desde …")
+  const ida = tD ? (formViaje.destino && formViaje.destino.nombre === tD ? formViaje.destino : (viaje && viaje.destino.nombre === tD ? viaje.destino : null)) : null;
+
+  $('in-origen').value = ''; formViaje.origen = null;          // Desde: tu ubicación actual
+  $('in-destino').value = vuelta ? vuelta.nombre : tO;           // Hasta: donde empezaste
+  formViaje.destino = vuelta;
+  mostrarSugerenciaOrigen(ida);
+  if (!$('in-destino').value) { estadoViaje('Escribe a dónde vuelves.'); $('in-destino').focus(); return; }
+  calcularViaje();
 }
 
 async function recalcularViaje(f) {
@@ -2315,9 +2327,14 @@ $('btn-usar-avanzada').addEventListener('click', () => { usarFuente('avanzada');
 $('tab-buscar').addEventListener('click', () => setModoInicio('buscar'));
 $('tab-rutas').addEventListener('click', () => setModoInicio('rutas'));
 $('form-viaje').addEventListener('submit', calcularViaje);
-$('in-origen').addEventListener('input', () => { formViaje.origen = null; });
+$('in-origen').addEventListener('input', () => { formViaje.origen = null; mostrarSugerenciaOrigen(null); });
 $('in-destino').addEventListener('input', () => { formViaje.destino = null; });
 $('btn-invertir').addEventListener('click', invertirViaje);
+$('sug-origen').addEventListener('click', () => {
+  if (!sugerenciaOrigen) return;
+  formViaje.origen = sugerenciaOrigen; $('in-origen').value = sugerenciaOrigen.nombre;
+  mostrarSugerenciaOrigen(null); calcularViaje();
+});
 $('btn-favorito').addEventListener('click', alternarFavorito);
 $('btn-repasar').addEventListener('click', repasarRuta);
 $('btn-conductor').addEventListener('click', () => { if (repasando) repasarRuta(); iniciarNavegacion('conductor'); });

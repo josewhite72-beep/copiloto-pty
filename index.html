@@ -171,6 +171,7 @@
     .acciones-viaje { align-items: center; margin-top: 4px; }
     .acciones-viaje .btn-mini { flex: 0 0 auto; padding: 14px 12px; }
     .ayuda-origen { margin-top: 8px; }
+    .sug-origen { margin-top: 6px; font-size: 13px; padding: 6px 10px; }
     .lugares { margin-top: 10px; }
     .lugares-lista, .favoritos-lista { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
     .lugar { text-align: left; background: var(--panel2); border: 1px solid var(--borde); color: var(--texto); border-radius: 10px;
@@ -239,6 +240,7 @@
           <div class="campo-col">
             <label class="etq" for="in-origen">Desde</label>
             <input id="in-origen" type="search" enterkeyhint="next" placeholder="📍 Mi ubicación actual">
+            <button type="button" id="sug-origen" class="btn-mini sug-origen" hidden></button>
           </div>
         </div>
         <div class="campo-lugar">

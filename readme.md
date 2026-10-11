@@ -11,7 +11,7 @@ un diagrama de carriles y un texto grande.
 ```
 index.html        Interfaz: inicio, HUD, grabación y editor
 app.js            Motor: rutas, GPS, avisos, simulador, editor, rotondas OSM
-sw.js             Service Worker (v12): app sin conexión + caché del mapa ya visto
+sw.js             Service Worker (v13): app sin conexión + caché del mapa ya visto
 manifest.json     Instalación PWA
 icons/            íconos normales, maskable (Android), apple-touch y favicon
 lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
@@ -28,7 +28,8 @@ lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
 3. Tus **avisos propios** (puntos de las rutas personalizadas) se suman solos si están sobre el camino y en el mismo sentido.
 4. **🚗 Iniciar** o **🤖 Simular**. Si te sales del camino con internet, la ruta se **recalcula** desde donde estás.
 5. **☆ Guardar en favoritas** para repetirla desde **⭐ Mis rutas** (funciona sin señal con la ruta guardada; con internet se
-   actualiza). **⇅ Invertir** prepara la vuelta.
+   actualiza). **⇅ Invertir** calcula la vuelta al instante: sale de tu ubicación actual y llega a
+   donde empezaste. Si la planeas desde otro sitio, el botón "↺ Salir desde …" usa el destino anterior como salida.
 
 Búsqueda de lugares: Nominatim (OpenStreetMap), solo al tocar "Calcular ruta" (sus reglas no permiten autocompletar),
 limitada a Panamá. Las rutas personalizadas del editor siguen en **⭐ Mis rutas → Rutas personalizadas (avanzado)**.
