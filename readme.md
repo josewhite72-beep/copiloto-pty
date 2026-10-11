@@ -11,7 +11,7 @@ un diagrama de carriles y un texto grande.
 ```
 index.html        Interfaz: inicio, HUD, grabación y editor
 app.js            Motor: rutas, GPS, avisos, simulador, editor, rotondas OSM
-sw.js             Service Worker (v13): app sin conexión + caché del mapa ya visto
+sw.js             Service Worker (v14): app sin conexión + caché del mapa ya visto
 manifest.json     Instalación PWA
 icons/            íconos normales, maskable (Android), apple-touch y favicon
 lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
@@ -33,6 +33,14 @@ lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
 
 Búsqueda de lugares: Nominatim (OpenStreetMap), solo al tocar "Calcular ruta" (sus reglas no permiten autocompletar),
 limitada a Panamá. Las rutas personalizadas del editor siguen en **⭐ Mis rutas → Rutas personalizadas (avanzado)**.
+
+## Pantalla de manejo
+
+- **Rumbo arriba**: el mapa gira para que la dirección de avance quede siempre hacia arriba; el carro es una flecha
+  fija en la parte baja de la pantalla (se ve más vía por delante). El botón **🧭** alterna con **Norte arriba**.
+- **Movimiento suave**: entre una lectura de GPS (o del simulador) y la siguiente, el carro y el mapa se animan cuadro a cuadro.
+- **Zoom según velocidad**: más cerca en ciudad (<35 km/h), más lejos en autopista (>75 km/h).
+- Hecho con CSS sobre Leaflet (sin complementos de terceros). Los textos del mapa giran con él (son imágenes).
 
 ## Conceptos
 

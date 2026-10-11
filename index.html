@@ -160,6 +160,20 @@
     .variante input, .variante select, .variante textarea { background: var(--bg); }
     .seccion { margin: 14px 0 0; font-size: 15px; color: var(--verde); }
     [hidden] { display: none !important; }
+    /* ---------- Mapa del HUD con rumbo arriba ---------- */
+    .mapa-rot { position: relative; overflow: hidden; background: #1a1a1a; }
+    #map-hud { position: absolute; left: 50%; top: 50%; width: 100%; height: 100%;
+      transform: translate(-50%, -50%) rotate(var(--rot, 0deg)); background: #1a1a1a; }
+    #map-hud .pin-num span { transform: rotate(var(--h, 0deg)); }
+    #map-hud .pin-num.actual span { transform: rotate(var(--h, 0deg)) scale(1.25); }
+    .hud-auto { position: absolute; left: 50%; top: calc(50% + var(--off, 0px)); width: 42px; height: 42px; z-index: 500;
+      transform: translate(-50%, -50%) rotate(var(--auto-rot, 0deg)); pointer-events: none; filter: drop-shadow(0 2px 4px #000); }
+    .hud-auto svg { width: 100%; height: 100%; display: block; }
+    .btn-brujula { position: absolute; right: 8px; top: 8px; z-index: 600; background: rgba(20,20,20,.85); color: #fff;
+      border: 1px solid var(--borde); border-radius: 999px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+    .hud-attr { position: absolute; right: 4px; bottom: 3px; z-index: 600; font-size: 11px; background: rgba(20,20,20,.75);
+      color: #bbb; padding: 1px 6px; border-radius: 4px; }
+    .hud-attr a { color: #8fd; }
     /* ---------- Inicio: buscar viaje ---------- */
     .pestanas .seg { padding: 12px 6px; font-size: 15px; }
     .campo-lugar { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 8px; }
@@ -357,7 +371,14 @@
     <div id="hud-alerta" class="hud-alerta"></div>
     <div id="hud-banner" class="hud-banner"></div>
 
-    <div id="map-hud" class="mapa"></div>
+    <div id="hud-mapa-wrap" class="mapa mapa-rot">
+      <div id="map-hud"></div>
+      <div id="hud-auto" class="hud-auto" aria-hidden="true" hidden>
+        <svg viewBox="0 0 40 40"><path d="M20 2 L36 36 L20 27 L4 36 Z" fill="#2f8cff" stroke="#fff" stroke-width="3" stroke-linejoin="round"/></svg>
+      </div>
+      <button id="btn-brujula" class="btn-brujula" type="button" aria-label="Cambiar orientación del mapa">🧭 Rumbo</button>
+      <div class="hud-attr">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></div>
+    </div>
 
     <div class="hud-controles"><button id="btn-detener" class="btn btn-rojo">⏹ Detener</button></div>
     <div class="hud-bloqueo">🔒 Controles bloqueados en movimiento · toca el aviso para repetirlo</div>
