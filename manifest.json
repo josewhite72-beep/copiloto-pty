@@ -1,16 +1,18 @@
 {
-  "name": "Copiloto de Ruta – Puntos Críticos",
-  "short_name": "CopilotoRuta",
-  "description": "Avisos de voz y guía de carriles para tramos difíciles hacia la Ciudad de Panamá.",
+  "name": "Copiloto PTY",
+  "short_name": "Copiloto PTY",
+  "description": "Avisos de voz, carriles y rotondas para tramos difíciles en Panamá, de ida y vuelta.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "lang": "es",
   "background_color": "#111111",
-  "theme_color": "#111111",
+  "theme_color": "#01275f",
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

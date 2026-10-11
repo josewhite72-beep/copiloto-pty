@@ -1,4 +1,4 @@
-# Copiloto PTY – Copiloto de Ruta (PWA)
+# Copiloto PTY (PWA)
 
 Copiloto de voz y pantalla estilo HUD para conductores con poca experiencia en tramos de alto estrés
 (interior → Ciudad de Panamá). Avisa **en orden** cada punto crítico a ~1 km y ~250 m, muestra una flecha,
@@ -11,9 +11,9 @@ un diagrama de carriles y un texto grande.
 ```
 index.html        Interfaz: inicio, HUD, grabación y editor
 app.js            Motor: rutas, GPS, avisos, simulador, editor, mapa sin señal
-sw.js             Service Worker (v7): app sin conexión + caché del mapa
+sw.js             Service Worker (v8): app sin conexión + caché del mapa
 manifest.json     Instalación PWA
-icons/            icon-192.png, icon-512.png
+icons/            íconos normales, maskable (Android), apple-touch y favicon
 lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
 ```
 

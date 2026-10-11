@@ -2,7 +2,7 @@
 // App: red primero (con límite de 3 s) para recibir actualizaciones; si no hay señal, usa la caché.
 // Mapa: caché primero; los tiles descargados con "Guardar mapa de esta ruta" quedan aquí.
 
-const APP_CACHE = 'copiloto-app-v7';
+const APP_CACHE = 'copiloto-app-v8';
 const TILE_CACHE = 'copiloto-tiles-v1';
 
 const ASSETS = [
@@ -16,7 +16,11 @@ const ASSETS = [
   './lib/images/marker-icon-2x.png',
   './lib/images/marker-shadow.png',
   './icons/icon-192.png',
-  './icons/icon-512.png'
+  './icons/icon-512.png',
+  './icons/icon-maskable-192.png',
+  './icons/icon-maskable-512.png',
+  './icons/apple-touch-icon.png',
+  './icons/favicon-48.png'
 ];
 
 self.addEventListener('install', e => {

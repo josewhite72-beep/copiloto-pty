@@ -3,11 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Copiloto de Ruta</title>
+  <title>Copiloto PTY</title>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#111111">
-  <link rel="icon" href="icons/icon-192.png">
-  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="icon" href="icons/favicon-48.png" sizes="48x48">
+  <link rel="icon" href="icons/icon-192.png" sizes="192x192">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <!-- Leaflet local: funciona sin depender de un CDN -->
   <link rel="stylesheet" href="lib/leaflet.css">
   <style>
@@ -31,6 +32,9 @@
 
     /* ---------- Inicio ---------- */
     .cabecera h1 { margin: 6px 0 0; font-size: 26px; color: var(--verde); }
+    .cabecera h1 { display: flex; align-items: center; gap: 10px; }
+    .cabecera .logo { width: 44px; height: 44px; border-radius: 10px; }
+    .cabecera .pty { color: var(--amarillo); }
     .cabecera .sub { margin: 2px 0 6px; color: var(--suave); }
     .tarjeta { background: var(--panel); border: 1px solid var(--borde); border-radius: 12px; padding: 12px; }
     .etq { display: block; font-size: 13px; color: var(--suave); margin: 8px 0 4px; }
@@ -177,7 +181,7 @@
   <!-- ================= INICIO ================= -->
   <section id="pantalla-inicio" class="pantalla activa">
     <header class="cabecera">
-      <h1>Copiloto de Ruta</h1>
+      <h1><img src="icons/icon-192.png" alt="" class="logo"> Copiloto <span class="pty">PTY</span></h1>
       <p class="sub">Avisos de voz y carriles para tramos difíciles</p>
     </header>
 
