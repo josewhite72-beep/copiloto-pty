@@ -160,6 +160,28 @@
     .variante input, .variante select, .variante textarea { background: var(--bg); }
     .seccion { margin: 14px 0 0; font-size: 15px; color: var(--verde); }
     [hidden] { display: none !important; }
+    /* ---------- Inicio: buscar viaje ---------- */
+    .pestanas .seg { padding: 12px 6px; font-size: 15px; }
+    .campo-lugar { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 8px; }
+    .campo-col { flex: 1; min-width: 0; }
+    .punto-lugar { width: 14px; height: 14px; border-radius: 50%; flex: 0 0 14px; margin-bottom: 15px; border: 3px solid #fff; }
+    .punto-lugar.origen { background: var(--azul); }
+    .punto-lugar.destino { background: var(--rojo); border-radius: 50% 50% 50% 0; transform: rotate(-45deg); }
+    input[type=search]::-webkit-search-cancel-button { filter: invert(1); }
+    .acciones-viaje { align-items: center; margin-top: 4px; }
+    .acciones-viaje .btn-mini { flex: 0 0 auto; padding: 14px 12px; }
+    .ayuda-origen { margin-top: 8px; }
+    .lugares { margin-top: 10px; }
+    .lugares-lista, .favoritos-lista { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+    .lugar { text-align: left; background: var(--panel2); border: 1px solid var(--borde); color: var(--texto); border-radius: 10px;
+      padding: 10px 12px; cursor: pointer; font-size: 15px; }
+    .lugar small { display: block; color: var(--suave); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+    .lugar:active { border-color: var(--verde); }
+    .favorito { display: flex; gap: 8px; align-items: stretch; }
+    .favorito .lugar { flex: 1; min-width: 0; }
+    .vacio { color: var(--suave); font-size: 14px; margin: 6px 0 0; }
+    #bloque-iniciar .btn-grande { padding: 20px; font-size: 20px; }
+
     .previa-cab { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 8px; }
     .previa-cab .info { margin: 0; }
     .mapa-previa { flex: none; height: 190px; min-height: 0; }
@@ -201,52 +223,102 @@
   <section id="pantalla-inicio" class="pantalla activa">
     <header class="cabecera">
       <h1><img src="icons/icon-192.png" alt="" class="logo"> Copiloto <span class="pty">PTY</span></h1>
-      <p class="sub">Avisos de voz y carriles para tramos difíciles</p>
+      <p class="sub">Tu copiloto de voz para llegar sin estrés</p>
     </header>
 
-    <div class="tarjeta">
-      <label class="etq" for="sel-ruta">Ruta</label>
-      <select id="sel-ruta"></select>
-      <span class="etq">Sentido</span>
-      <div class="segmentado" role="group" aria-label="Sentido">
-        <button id="btn-ida" class="seg" data-sentido="ida">Ida</button>
-        <button id="btn-vuelta" class="seg" data-sentido="vuelta">Vuelta</button>
-      </div>
-      <label class="etq" for="sel-destino">Destino</label>
-      <select id="sel-destino"></select>
-      <p id="ruta-info" class="info"></p>
+    <div class="segmentado pestanas" role="tablist" aria-label="Modo">
+      <button id="tab-buscar" class="seg" role="tab" data-modo="buscar">🔍 ¿A dónde vas?</button>
+      <button id="tab-rutas" class="seg" role="tab" data-modo="rutas">⭐ Mis rutas</button>
     </div>
 
-    <div class="tarjeta previa">
-      <div class="previa-cab"><b>Vista previa</b><span id="previa-resumen" class="info"></span></div>
+    <!-- ===== Buscar origen y destino ===== -->
+    <div id="panel-buscar" class="tarjeta">
+      <form id="form-viaje" autocomplete="off">
+        <div class="campo-lugar">
+          <span class="punto-lugar origen" aria-hidden="true"></span>
+          <div class="campo-col">
+            <label class="etq" for="in-origen">Desde</label>
+            <input id="in-origen" type="search" enterkeyhint="next" placeholder="📍 Mi ubicación actual">
+          </div>
+        </div>
+        <div class="campo-lugar">
+          <span class="punto-lugar destino" aria-hidden="true"></span>
+          <div class="campo-col">
+            <label class="etq" for="in-destino">Hasta</label>
+            <input id="in-destino" type="search" enterkeyhint="search" placeholder="Escribe un lugar o dirección" required>
+          </div>
+        </div>
+        <div class="fila acciones-viaje">
+          <button type="button" id="btn-invertir" class="btn-mini" title="Invertir origen y destino" aria-label="Invertir origen y destino">⇅ Invertir</button>
+          <button type="submit" id="btn-calcular" class="btn btn-verde">Calcular ruta</button>
+        </div>
+      </form>
+      <p class="info ayuda-origen">Deja "Desde" vacío para salir de donde estás, o escribe otro lugar para planear el viaje.</p>
+      <div id="lugares" class="lugares" hidden>
+        <p id="lugares-titulo" class="etq"></p>
+        <div id="lugares-lista" class="lugares-lista"></div>
+      </div>
+      <p id="viaje-estado" class="info" role="status" aria-live="polite"></p>
+    </div>
+
+    <!-- ===== Mis rutas: favoritas y rutas avanzadas ===== -->
+    <div id="panel-rutas" hidden>
+      <div class="tarjeta">
+        <b>⭐ Favoritas</b>
+        <div id="favoritos-lista" class="favoritos-lista"></div>
+      </div>
+      <details id="avanzadas" class="tarjeta">
+        <summary>🛠️ Rutas personalizadas (avanzado)</summary>
+        <p class="info">Rutas armadas a mano en el editor, con tus propios puntos, carriles y destinos.</p>
+        <label class="etq" for="sel-ruta">Ruta</label>
+        <select id="sel-ruta"></select>
+        <span class="etq">Sentido</span>
+        <div class="segmentado" role="group" aria-label="Sentido">
+          <button id="btn-ida" class="seg" data-sentido="ida">Ida</button>
+          <button id="btn-vuelta" class="seg" data-sentido="vuelta">Vuelta</button>
+        </div>
+        <label class="etq" for="sel-destino">Destino</label>
+        <select id="sel-destino"></select>
+        <p id="ruta-info" class="info"></p>
+        <div class="fila-wrap">
+          <button id="btn-usar-avanzada" class="btn-mini primario">Usar esta ruta</button>
+          <button id="btn-editor" class="btn-mini">✏️ Editar rutas y puntos</button>
+          <button id="btn-grabar" class="btn-mini">🎙️ Grabar ruta (acompañante)</button>
+        </div>
+      </details>
+    </div>
+
+    <!-- ===== Vista previa ===== -->
+    <div id="previa" class="tarjeta previa" hidden>
+      <div class="previa-cab"><b id="previa-titulo">Vista previa</b><span id="previa-resumen" class="info"></span></div>
       <div id="map-previa" class="mapa mapa-previa"></div>
       <div id="previa-alertas"></div>
       <details id="previa-maniobras">
         <summary id="previa-cuenta">Ver maniobras</summary>
         <ol id="previa-lista" class="previa-lista"></ol>
       </details>
-      <div class="fila-wrap"><button id="btn-repasar" class="btn-mini">🔊 Repasar en voz alta</button></div>
+      <div class="fila-wrap">
+        <button id="btn-repasar" class="btn-mini">🔊 Repasar en voz alta</button>
+        <button id="btn-favorito" class="btn-mini">☆ Guardar en favoritas</button>
+      </div>
     </div>
 
-    <button id="btn-conductor" class="btn btn-verde">🚗 Iniciar como conductor</button>
-
-    <div class="fila">
-      <button id="btn-simular" class="btn btn-azul">🤖 Simular</button>
-      <select id="sim-vel" aria-label="Velocidad simulada">
-        <option value="60">60 km/h</option>
-        <option value="80" selected>80 km/h</option>
-        <option value="100">100 km/h</option>
-      </select>
-      <select id="sim-factor" aria-label="Aceleración de la simulación">
-        <option value="1">×1</option>
-        <option value="5" selected>×5</option>
-        <option value="10">×10</option>
-      </select>
+    <div id="bloque-iniciar" hidden>
+      <button id="btn-conductor" class="btn btn-verde btn-grande">🚗 Iniciar</button>
+      <div class="fila" style="margin-top:10px">
+        <button id="btn-simular" class="btn btn-azul">🤖 Simular</button>
+        <select id="sim-vel" aria-label="Velocidad simulada">
+          <option value="60">60 km/h</option>
+          <option value="80" selected>80 km/h</option>
+          <option value="100">100 km/h</option>
+        </select>
+        <select id="sim-factor" aria-label="Aceleración de la simulación">
+          <option value="1">×1</option>
+          <option value="5" selected>×5</option>
+          <option value="10">×10</option>
+        </select>
+      </div>
     </div>
-
-    <button id="btn-grabar" class="btn btn-gris">🎙️ Grabar ruta (solo acompañante)</button>
-    <button id="btn-editor" class="btn btn-gris">✏️ Editar rutas y puntos</button>
-    <p class="info">📶 Sin señal: los avisos de voz, la flecha y los carriles siguen funcionando. El mapa muestra lo que ya se vio antes con datos.</p>
 
     <details class="tarjeta">
       <summary>🔊 Voz</summary>
@@ -259,6 +331,7 @@
       <div class="fila-wrap"><button id="aj-probar" class="btn-mini">Probar voz</button></div>
     </details>
 
+    <p class="info">📶 Una vez calculada, la ruta funciona sin señal: avisos de voz, flecha y carriles. Para buscar lugares y calcular rutas hace falta internet.</p>
     <p class="aviso-seguridad">Configura todo antes de salir. Con el carro en movimiento los controles se bloquean.
       Los avisos son una ayuda: manda siempre lo que ves en la vía y la señalización.</p>
   </section>

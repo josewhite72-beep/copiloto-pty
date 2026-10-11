@@ -170,7 +170,9 @@ function normalizarPunto(p) {
     carrilTexto: String(p.carrilTexto || ''),
     instrucciones: { larga: String(ins.larga || ''), corta: String(ins.corta || ''), entrada: String(ins.entrada || '') },
     variantes,
-    rotGeo: normalizarRotGeo(p.rotGeo)
+    rotGeo: normalizarRotGeo(p.rotGeo),
+    calle: String(p.calle || ''),          // calle de salida (rotondas calculadas)
+    fuente: String(p.fuente || '')         // 'auto' = maniobra calculada, 'propio' = aviso tuyo
   };
 }
 
@@ -284,21 +286,21 @@ function resolverPunto(p, destId, destinos) {
     if (r.salida) {
       const ord = ORD[r.salida];
       const calle = salidasReales[r.salida - 1] && !/sin nombre/i.test(salidasReales[r.salida - 1].nombre)
-        ? salidasReales[r.salida - 1].nombre : '';
+        ? salidasReales[r.salida - 1].nombre : (p.calle || '');
       const por = calle ? `, por ${calle}` : '';
       r.calleSalida = calle;
-      if (!r.larga) r.larga = `En un kilómetro, ${p.nombre}. Tome la ${ord} salida${hacia}${por}.`;
+      if (!r.larga) r.larga = `En {dist}, ${p.nombre.toLowerCase().startsWith('rotonda') ? 'rotonda' : p.nombre}. Tome la ${ord} salida${hacia}${por}.`;
       if (!r.corta) r.corta = `En la rotonda, tome la ${ord} salida${hacia}${por}.`;
       if (!r.entrada) r.entrada = `${cap(ord)} salida${hacia}${por}.`;
       if (!r.carrilTexto) r.carrilTexto = `ROTONDA: ${ord.toUpperCase()} SALIDA` + (calle ? ` · ${calle.toUpperCase()}` : '');
     } else {
-      if (!r.larga) r.larga = `En un kilómetro, ${p.nombre}.`;
+      if (!r.larga) r.larga = `En {dist}, ${p.nombre}.`;
       if (!r.corta) r.corta = `Rotonda. Busque la salida${hacia}.`;
       if (!r.carrilTexto) r.carrilTexto = 'ROTONDA';
     }
   }
   if (!r.carrilTexto) r.carrilTexto = p.nombre.toUpperCase();
-  if (!r.larga) r.larga = `En un kilómetro, ${p.nombre}.`;
+  if (!r.larga) r.larga = `En {dist}, ${p.nombre}.`;
   if (!r.corta) r.corta = `${p.nombre}. Atención.`;
   return r;
 }
@@ -498,8 +500,15 @@ function vozElegida() {
          voces.find(v => /^es/i.test(v.lang)) || null;
 }
 
+function distanciaHablada(d) {
+  if (!isFinite(d) || d >= 900) return 'un kilómetro';
+  if (d >= 150) return `${Math.round(d / 100) * 100} metros`;
+  return `${Math.max(10, Math.round(d / 10) * 10)} metros`;
+}
+
 function decir(texto, { urgente = false, puntoId = null, aviso = false } = {}) {
   if (!texto) return;
+  texto = texto.replace('{dist}', 'un kilómetro');
   if (aviso) voz.ultimoAviso = texto;
   if (!('speechSynthesis' in window)) return;
   const item = { texto, puntoId };
@@ -601,22 +610,36 @@ let mapaHud = null, capaHud = null, autoHud = null, marcadoresHud = [];
 
 const puntoActual = () => (nav.idx >= 0 ? nav.puntos[nav.idx] : null);
 
+// Ruta activa: un viaje calculado (buscar destino / favorita) o una ruta personalizada del editor
+function contexto() {
+  if (fuente === 'viaje' && viaje) {
+    return { tipo: 'viaje', ruta: { nombre: viaje.tramo.nombre, verificada: true }, tramo: viaje.tramo, destId: '', sentido: 'ida' };
+  }
+  if (fuente === 'avanzada') {
+    const r = rutaSel();
+    return { tipo: 'avanzada', ruta: r, tramo: r[sel.sentido], destId: sel.destino, sentido: sel.sentido };
+  }
+  return null;
+}
+
 function iniciarNavegacion(modo) {
-  const ruta = rutaSel(), tramo = ruta[sel.sentido];
-  const puntos = puntosParaNavegar(tramo, sel.destino);
+  const ctx = contexto();
+  if (!ctx) { toast('Primero busca un destino o elige una ruta'); return; }
+  const { ruta, tramo, destId } = ctx;
+  const puntos = puntosParaNavegar(tramo, destId);
   if (!puntos.length) {
-    alert(`"${tramo.nombre}" no tiene puntos${sel.destino ? ' para este destino' : ''}. Agrégalos en el editor o graba la ruta.`);
+    alert(`"${tramo.nombre}" no tiene puntos${destId ? ' para este destino' : ''}. Agrégalos en el editor o graba la ruta.`);
     return;
   }
-  if (modo === 'conductor' && !ruta.verificada &&
+  if (modo === 'conductor' && ctx.tipo === 'avanzada' && !ruta.verificada &&
       !confirm('Esta ruta todavía no está marcada como verificada: las coordenadas o los avisos podrían no coincidir con la vía.\n\n¿Iniciar de todas formas?')) return;
 
   callarVoz();
   Object.assign(nav, {
-    activo: true, modo, ruta, sentido: sel.sentido, tramo, destino: sel.destino, puntos,
-    geo: prepararGeometria(trazadoSimulable(trazadoPara(tramo, sel.destino), puntos, modo), puntos, puntosDelRecorrido(tramo, sel.destino)),
+    activo: true, modo, ruta, sentido: ctx.sentido, tramo, destino: destId, puntos, esViaje: ctx.tipo === 'viaje',
+    geo: prepararGeometria(trazadoSimulable(trazadoPara(tramo, destId), puntos, modo), puntos, puntosDelRecorrido(tramo, destId)),
     idx: -1, min: Infinity, alertas: {}, ultimoFix: null, sProg: null, sMax: -Infinity,
-    contrario: false, completado: false
+    contrario: false, completado: false, fueraCuenta: 0, recalculando: false
   });
   mostrarPantalla('pantalla-hud');
   document.body.classList.remove('bloqueado');
@@ -630,7 +653,7 @@ function iniciarNavegacion(modo) {
   setChip($('hud-gps'), modo === 'simulador' ? 'Simulado' : 'Buscando GPS…', modo === 'simulador' ? 'ok' : 'warn');
   prepararMapaHud();
   pedirWakeLock();
-  const dest = nombreDestino(tramo, sel.destino);
+  const dest = ctx.tipo === 'viaje' ? viaje.destino.nombre : nombreDestino(tramo, destId);
   decir((modo === 'simulador' ? 'Simulación iniciada. ' : 'Copiloto activado. ') + (dest ? `Destino: ${dest}.` : ''));
   if (modo === 'simulador') iniciarSimulador();
   else iniciarGPS();
@@ -649,6 +672,7 @@ function trazadoSimulable(trazado, puntos, modo) {
 }
 
 function encabezadoHud(extra) {
+  if (nav.esViaje) return nav.tramo.nombre + (extra ? ` · ${extra}` : '');
   const dest = nombreDestino(nav.tramo, nav.destino) || 'General';
   return `${nav.tramo.nombre} · ${dest}` + (extra ? ` · ${extra}` : '');
 }
@@ -727,6 +751,7 @@ function evaluarPaso(f, dist, proj) {
     nav.sMax = Math.max(nav.sMax, proj.s);
     if (proj.s < nav.sMax - 150) nav.contrario = true;
     else if (proj.s >= nav.sMax - 20) nav.contrario = false;
+    if (nav.idx === nav.puntos.length - 1 && dist < 20) return true; // llegó al último punto (el destino)
     return dist < -15;
   }
   nav.min = Math.min(nav.min, dist);
@@ -761,6 +786,14 @@ function procesarFix(f) {
   const pts = nav.puntos, geo = nav.geo;
   let proj = null, fuera = false;
   if (geo.real) { proj = proyectar(geo, f, nav.sProg); nav.sProg = proj.s; fuera = proj.d > CFG.fueraRuta; }
+  // Viaje calculado: si te sales del camino, recalcula desde donde estás
+  if (nav.esViaje && nav.modo === 'conductor' && fuera && f.acc <= CFG.precisionMax) {
+    if (++nav.fueraCuenta >= 4 && !nav.recalculando) recalcularViaje(f);
+  } else nav.fueraCuenta = 0;
+  if (nav.recalculando) {
+    $('hud-banner').textContent = '🔄 Recalculando la ruta…'; $('hud-banner').className = 'hud-banner visible';
+    return;
+  }
 
   if (nav.idx < 0) { nav.idx = indiceInicial(f, proj); marcarPinesHud(); }
   if (nav.idx >= pts.length) return completar();
@@ -777,8 +810,8 @@ function procesarFix(f) {
   const p = pts[nav.idx];
   const al = nav.alertas[p.id] || (nav.alertas[p.id] = { largo: false, corto: false, entrada: false });
   const otro = nav.sentido === 'ida' ? 'la vuelta' : 'la ida';
-  const pausa = fuera ? 'Fuera de la ruta: avisos en pausa'
-              : nav.contrario ? `Sentido contrario: avisos en pausa (¿era ${otro}?)`
+  const pausa = fuera ? (nav.esViaje && nav.modo === 'conductor' ? 'Fuera de la ruta: se recalculará en unos segundos' : 'Fuera de la ruta: avisos en pausa')
+              : nav.contrario ? (nav.esViaje ? 'Sentido contrario: avisos en pausa' : `Sentido contrario: avisos en pausa (¿era ${otro}?)`)
               : !gpsOk ? 'GPS impreciso: avisos en pausa' : '';
 
   if (!pausa) {
@@ -792,7 +825,7 @@ function procesarFix(f) {
       vibrar();
     } else if (dist <= CFG.avisoLargo && dist > CFG.avisoCorto + 50 && !al.largo) {
       al.largo = true;
-      decir(p.larga, { puntoId: p.id, aviso: true });
+      decir(p.larga.replace('{dist}', distanciaHablada(dist)), { puntoId: p.id, aviso: true });
     }
   }
 
@@ -816,14 +849,14 @@ function completar() {
   clearInterval(nav.simTimer);
   marcarPinesHud();
   $('hud-dist').textContent = '✓';
-  $('hud-nombre').textContent = 'Ruta completada';
+  $('hud-nombre').textContent = nav.esViaje ? '¡Llegaste!' : 'Ruta completada';
   $('hud-progreso').textContent = encabezadoHud();
   $('hud-carriles').innerHTML = '';
   $('hud-alerta').className = 'hud-alerta';
   $('hud-banner').className = 'hud-banner';
   pintarDibujo($('hud-flecha'), { tipo: 'normal', flecha: 'recto' });
   document.body.classList.remove('bloqueado');
-  decir('Pasó todos los puntos críticos de la ruta.');
+  decir(nav.esViaje ? 'Llegó a su destino.' : 'Pasó todos los puntos críticos de la ruta.');
 }
 
 $('hud-tarjeta').addEventListener('click', () => {
@@ -1304,6 +1337,15 @@ function guardarFormPunto(e) {
 
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
 
+function adelgazar(c) {
+  const out = [c[0]];
+  for (let i = 1; i < c.length; i++) {
+    const u = out[out.length - 1];
+    if (i === c.length - 1 || distancia({ lat: u[0], lon: u[1] }, { lat: c[i][0], lon: c[i][1] }) >= 8) out.push(c[i]);
+  }
+  return out;
+}
+
 async function rutaOSRM(puntos) {
   const coords = puntos.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join(';');
   const ctrl = new AbortController(), to = setTimeout(() => ctrl.abort(), 30000);
@@ -1315,11 +1357,7 @@ async function rutaOSRM(puntos) {
   if (!data || data.code !== 'Ok' || !data.routes || !data.routes.length) throw new Error((data && (data.message || data.code)) || 'sin ruta');
   const ruta = data.routes[0];
   const c = ruta.geometry.coordinates.map(([lon, lat]) => [r6(lat), r6(lon)]);
-  const trazado = [c[0]];
-  for (let i = 1; i < c.length; i++) {
-    const u = trazado[trazado.length - 1];
-    if (i === c.length - 1 || distancia({ lat: u[0], lon: u[1] }, { lat: c[i][0], lon: c[i][1] }) >= 8) trazado.push(c[i]);
-  }
+  const trazado = adelgazar(c);
   // Posibles desvíos: tramos mucho más largos por carretera que en línea recta
   const desvios = [];
   (ruta.legs || []).forEach((leg, i) => {
@@ -1780,7 +1818,366 @@ function renderInicio() {
   const real = !!trazadoPara(t, sel.destino);
   $('ruta-info').textContent = `${n} punto(s) · ${real ? 'camino por la vía' : 'camino aproximado (línea recta)'} · ` +
                                (r.verificada ? '✔ verificada' : '⚠ sin verificar');
+  $('tab-buscar').classList.toggle('activo', modoInicio === 'buscar');
+  $('tab-rutas').classList.toggle('activo', modoInicio === 'rutas');
+  $('panel-buscar').hidden = modoInicio !== 'buscar';
+  $('panel-rutas').hidden = modoInicio !== 'rutas';
+  renderFavoritos();
   renderPrevia();
+}
+
+/* ------------------------------------------------------------------ */
+/* ¿A dónde vas? — búsqueda de lugares (Nominatim) y ruta con maniobras  */
+/* automáticas (OSRM) + tus avisos propios                              */
+/* ------------------------------------------------------------------ */
+
+const LS_VIAJE = 'copiloto.viaje.v1', LS_FAV = 'copiloto.favoritos.v1', LS_MODO = 'copiloto.modo', LS_FUENTE = 'copiloto.fuente';
+const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
+
+function normalizarLugar(l) {
+  if (!l || !isFinite(Number(l.lat)) || !isFinite(Number(l.lon))) return null;
+  return { nombre: String(l.nombre || 'Lugar'), detalle: String(l.detalle || ''), lat: Number(l.lat), lon: Number(l.lon), gps: !!l.gps };
+}
+function normalizarViaje(v) {
+  if (!v || !v.tramo) return null;
+  const origen = normalizarLugar(v.origen), destino = normalizarLugar(v.destino);
+  if (!origen || !destino) return null;
+  return { origen, destino, tramo: normalizarTramo(v.tramo, 'Viaje'), creado: Number(v.creado) || Date.now() };
+}
+
+let modoInicio = leerLS(LS_MODO, 'buscar') === 'rutas' ? 'rutas' : 'buscar';
+let viaje = normalizarViaje(leerLS(LS_VIAJE, null));
+let fuente = leerLS(LS_FUENTE, viaje ? 'viaje' : null);
+if (fuente === 'viaje' && !viaje) fuente = null;
+let favoritos = (leerLS(LS_FAV, []) || []).map(f => {
+  const v = normalizarViaje(f); return v ? { id: String(f.id || uid()), nombre: String(f.nombre || ''), ...v } : null;
+}).filter(Boolean);
+const formViaje = { origen: null, destino: null };   // lugares ya elegidos para cada campo
+let ultimaUbicacion = null;
+
+const guardarViaje = () => escribirLS(LS_VIAJE, viaje);
+const guardarFavoritos = () => escribirLS(LS_FAV, favoritos);
+function usarFuente(f) { fuente = f; escribirLS(LS_FUENTE, f); }
+function setModoInicio(m) { modoInicio = m; escribirLS(LS_MODO, m); renderInicio(); }
+
+function estadoViaje(msg) { $('viaje-estado').textContent = msg || ''; }
+
+let ultimaBusqueda = 0;
+async function buscarLugares(texto) {
+  // Reglas de Nominatim: máximo 1 consulta por segundo y sin autocompletar mientras se escribe
+  const espera = 1100 - (Date.now() - ultimaBusqueda);
+  if (espera > 0) await new Promise(r => setTimeout(r, espera));
+  ultimaBusqueda = Date.now();
+  let url = `${NOMINATIM}?format=jsonv2&limit=6&countrycodes=pa&accept-language=es&q=${encodeURIComponent(texto)}`;
+  if (ultimaUbicacion) {
+    const { lat, lon } = ultimaUbicacion;
+    url += `&viewbox=${(lon - 0.6).toFixed(3)},${(lat + 0.6).toFixed(3)},${(lon + 0.6).toFixed(3)},${(lat - 0.6).toFixed(3)}`;
+  }
+  const ctrl = new AbortController(), to = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    return data.map(d => {
+      const partes = String(d.display_name || '').split(',').map(x => x.trim());
+      const nombre = d.name || partes[0] || texto;
+      return { nombre, detalle: partes.filter(x => x !== nombre).slice(0, 3).join(', '), lat: Number(d.lat), lon: Number(d.lon) };
+    });
+  } finally { clearTimeout(to); }
+}
+
+function elegirDeLista(campo, lista) {
+  return new Promise(resolve => {
+    $('lugares-titulo').textContent = campo === 'origen' ? '¿Desde cuál de estos lugares sales?' : '¿Cuál de estos lugares es tu destino?';
+    const cont = $('lugares-lista'); cont.innerHTML = '';
+    lista.forEach(l => {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'lugar';
+      b.textContent = l.nombre;
+      if (l.detalle) { const sm = document.createElement('small'); sm.textContent = l.detalle; b.appendChild(sm); }
+      b.addEventListener('click', () => { $('lugares').hidden = true; resolve(l); });
+      cont.appendChild(b);
+    });
+    const c = document.createElement('button'); c.type = 'button'; c.className = 'btn-mini'; c.textContent = 'Ninguno: cambiaré lo que escribí';
+    c.addEventListener('click', () => { $('lugares').hidden = true; resolve(null); });
+    cont.appendChild(c);
+    $('lugares').hidden = false;
+    $('lugares').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+}
+
+async function resolverLugar(campo, texto) {
+  estadoViaje(`Buscando "${texto}"…`);
+  let lista;
+  try { lista = await buscarLugares(texto); }
+  catch (e) { estadoViaje('No se pudo buscar el lugar. Revisa tu conexión a internet.'); return null; }
+  if (!lista.length) {
+    estadoViaje(`No encontré "${texto}". Prueba con otro nombre o agrega la zona, por ejemplo: "Albrook Mall, Panamá".`);
+    $(campo === 'origen' ? 'in-origen' : 'in-destino').focus();
+    return null;
+  }
+  estadoViaje('');
+  const l = lista.length === 1 ? lista[0] : await elegirDeLista(campo, lista);
+  if (!l) { $(campo === 'origen' ? 'in-origen' : 'in-destino').focus(); return null; }
+  formViaje[campo] = l;
+  $(campo === 'origen' ? 'in-origen' : 'in-destino').value = l.nombre;
+  return l;
+}
+
+function ubicacionActual() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error('sin GPS'));
+    navigator.geolocation.getCurrentPosition(
+      pos => { ultimaUbicacion = { lat: pos.coords.latitude, lon: pos.coords.longitude }; resolve(ultimaUbicacion); },
+      reject, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
+  });
+}
+
+const DIR = {
+  'left': 'a la izquierda', 'right': 'a la derecha', 'slight left': 'ligeramente a la izquierda',
+  'slight right': 'ligeramente a la derecha', 'sharp left': 'cerrado a la izquierda', 'sharp right': 'cerrado a la derecha',
+  'straight': 'recto', 'uturn': 'en U'
+};
+function flechaDe(mod) {
+  if (mod === 'uturn') return 'retorno';
+  if (mod === 'slight left') return 'sal-izq';
+  if (mod === 'slight right') return 'sal-der';
+  if (/left/.test(mod)) return 'izq';
+  if (/right/.test(mod)) return 'der';
+  return 'recto';
+}
+
+// Convierte los pasos de OSRM en puntos de aviso que entiende el copiloto
+function maniobrasDeOSRM(ruta, destinoNombre) {
+  const pasos = (ruta.legs || []).flatMap(l => l.steps || []);
+  const puntos = [];
+  pasos.forEach((st, i) => {
+    const m = st.maneuver || {}, tipo = m.type, mod = m.modifier || '';
+    if (!m.location) return;
+    const [lon, lat] = m.location;
+    const via = st.name || st.ref || '';
+    const hacia = st.destinations ? String(st.destinations).split(':').pop().split(',')[0].trim() : '';
+    const lado = /left/.test(mod) ? 'izquierda' : /right/.test(mod) ? 'derecha' : '';
+    const inter = st.intersections && st.intersections[0];
+    const carriles = inter && Array.isArray(inter.lanes) && inter.lanes.length > 1 ? inter.lanes.map(l => l.valid ? 'O' : '-').join('') : '';
+    const base = { id: 'm' + i, lat: r6(lat), lon: r6(lon), fuente: 'auto', carriles };
+    const destinoTxt = hacia ? ` hacia ${hacia}` : (via ? ` por ${via}` : '');
+    const etiqueta = (hacia || via) ? ` · ${(hacia || via).toUpperCase()}` : '';
+    const punto = (tipoP, flecha, nombre, accion, texto) => puntos.push(normalizarPunto({
+      ...base, tipo: tipoP, flecha, nombre, carrilTexto: texto,
+      instrucciones: { larga: `En {dist}, ${accion}.`, corta: `${cap(accion)}.` }
+    }));
+
+    switch (tipo) {
+      case 'roundabout': case 'rotary': {
+        const salida = Math.max(1, Number(m.exit) || 1);
+        puntos.push(normalizarPunto({ ...base, tipo: 'rotonda', nombre: st.rotary_name ? `Rotonda ${st.rotary_name}` : (via ? `Rotonda hacia ${via}` : 'Rotonda'),
+          salida, salidasTotal: Math.max(salida + 1, 3), calle: via }));
+        break;
+      }
+      case 'turn': case 'end of road': case 'roundabout turn': case 'continue': case 'new name': {
+        if (!mod || mod === 'straight') return;
+        if (/^slight/.test(mod) && (tipo === 'continue' || tipo === 'new name')) return; // la vía solo se curva
+        const accion = mod === 'uturn' ? `haga un retorno${via ? ' hacia ' + via : ''}` : `gire ${DIR[mod] || ''}${via ? ' en ' + via : ''}`;
+        punto('normal', flechaDe(mod), mod === 'uturn' ? `Retorno${via ? ' · ' + via : ''}` : `${cap(lado)}${via ? ' en ' + via : ''}`,
+              accion, mod === 'uturn' ? 'RETORNO' + etiqueta : lado.toUpperCase() + etiqueta);
+        break;
+      }
+      case 'fork':
+        if (!lado) return;
+        punto('division', lado === 'izquierda' ? 'sal-izq' : 'sal-der', `Bifurcación${hacia || via ? ' hacia ' + (hacia || via) : ''}`,
+              `manténgase a la ${lado}${destinoTxt}`, `MANTÉNGASE A LA ${lado.toUpperCase()}${etiqueta}`);
+        break;
+      case 'off ramp':
+        punto('division', lado === 'izquierda' ? 'sal-izq' : 'sal-der', `Salida${hacia || via ? ' hacia ' + (hacia || via) : ''}`,
+              `tome la salida a la ${lado || 'derecha'}${destinoTxt}`, `SALIDA A LA ${(lado || 'derecha').toUpperCase()}${etiqueta}`);
+        break;
+      case 'on ramp':
+        punto('normal', lado === 'izquierda' ? 'sal-izq' : lado ? 'sal-der' : 'recto', `Rampa${via ? ' a ' + via : ''}`,
+              `tome la rampa${lado ? ' a la ' + lado : ''}${destinoTxt}`, `RAMPA${etiqueta}`);
+        break;
+      case 'merge':
+        punto('normal', lado === 'izquierda' ? 'sal-izq' : 'sal-der', `Incorporación${via ? ' a ' + via : ''}`,
+              `incorpórese${via ? ' a ' + via : ''} con precaución`, `INCORPÓRESE${etiqueta}`);
+        break;
+      case 'arrive': {
+        const donde = lado ? `a la ${lado}` : 'adelante';
+        puntos.push(normalizarPunto({ ...base, tipo: 'normal', flecha: 'recto', nombre: `Destino: ${destinoNombre}`, carrilTexto: 'DESTINO',
+          instrucciones: { larga: `En {dist}, llegará a ${destinoNombre}.`, corta: `Llegando a ${destinoNombre}. El destino está ${donde}.` } }));
+        break;
+      }
+      default: break; // depart, notification, etc.
+    }
+  });
+  return puntos;
+}
+
+function rumboEn(geo, s) {
+  const a = interpolar(geo.linea, geo.cum, Math.max(0, s - 30)), b = interpolar(geo.linea, geo.cum, Math.min(geo.total, s + 30));
+  return rumbo(a, b);
+}
+
+// Tus avisos propios (de las rutas personalizadas) que quedan sobre este camino y en el mismo sentido
+function avisosPropiosEn(trazado) {
+  const gv = prepararGeometria(trazado, []);
+  const out = [], vistos = new Set();
+  rutas.forEach(r => SENTIDOS.forEach(sn => {
+    const t = r[sn];
+    if (!t.puntos.length) return;
+    const tz = t.trazados['*'] || null;
+    const gt = tz ? prepararGeometria(tz, t.puntos) : null;
+    t.puntos.forEach((p, i) => {
+      if (p.tipo === 'paso' || p.tipo === 'rotonda' || p.fuente === 'auto') return;
+      const q = proyectar(gv, p);
+      if (q.d > 40) return;
+      const bv = rumboEn(gv, q.s);
+      let ba = null;
+      if (gt) ba = rumboEn(gt, gt.sPuntos[i]);
+      else if (t.puntos[i - 1]) ba = rumbo(t.puntos[i - 1], p);
+      else if (t.puntos[i + 1]) ba = rumbo(p, t.puntos[i + 1]);
+      if (ba != null && difAng(ba, bv) > 60) return;
+      const clave = `${p.lat.toFixed(4)},${p.lon.toFixed(4)},${p.nombre}`;
+      if (vistos.has(clave)) return;
+      vistos.add(clave);
+      const copia = JSON.parse(JSON.stringify(p));
+      out.push(normalizarPunto({ ...copia, id: `a-${r.id}-${p.id}`, variantes: {}, soloDestinos: [], fuente: 'propio' }));
+    });
+  }));
+  return out;
+}
+
+async function calcularRutaViaje(origen, destino) {
+  const url = `${OSRM}${origen.lon.toFixed(6)},${origen.lat.toFixed(6)};${destino.lon.toFixed(6)},${destino.lat.toFixed(6)}` +
+              '?overview=full&geometries=geojson&steps=true';
+  const ctrl = new AbortController(), to = setTimeout(() => ctrl.abort(), 30000);
+  let data;
+  try { data = await (await fetch(url, { signal: ctrl.signal })).json(); } finally { clearTimeout(to); }
+  if (!data || data.code !== 'Ok' || !data.routes || !data.routes.length) throw new Error((data && data.message) || 'sin ruta');
+  const ruta = data.routes[0];
+  const trazado = adelgazar(ruta.geometry.coordinates.map(([lon, lat]) => [r6(lat), r6(lon)]));
+  const puntos = [...maniobrasDeOSRM(ruta, destino.nombre), ...avisosPropiosEn(trazado)];
+  const tramo = normalizarTramo({ nombre: `Hacia ${destino.nombre}`, destinos: [], trazados: { '*': trazado },
+                                  duraciones: { '*': ruta.duration / 60 }, puntos }, 'Viaje');
+  ordenarPorTrazado(tramo, '*');
+  return { origen, destino, tramo, creado: Date.now() };
+}
+
+async function calcularViaje(e) {
+  if (e) e.preventDefault();
+  $('lugares').hidden = true;
+  const tO = $('in-origen').value.trim(), tD = $('in-destino').value.trim();
+  if (!tD) { estadoViaje('Escribe a dónde vas.'); $('in-destino').focus(); return; }
+  $('btn-calcular').disabled = true;
+  try {
+    let origen = tO ? (formViaje.origen && formViaje.origen.nombre === tO ? formViaje.origen : await resolverLugar('origen', tO)) : null;
+    if (tO && !origen) return;
+    const destino = formViaje.destino && formViaje.destino.nombre === tD ? formViaje.destino : await resolverLugar('destino', tD);
+    if (!destino) return;
+    if (!origen) {
+      estadoViaje('Obteniendo tu ubicación…');
+      try { const u = await ubicacionActual(); origen = { nombre: 'Tu ubicación', lat: u.lat, lon: u.lon, gps: true }; }
+      catch (err) { estadoViaje('No pude obtener tu ubicación. Activa el GPS o escribe en "Desde" el lugar de partida.'); return; }
+    }
+    estadoViaje('Calculando la ruta…');
+    try { viaje = await calcularRutaViaje(origen, destino); }
+    catch (err) { estadoViaje('No se pudo calcular la ruta. Revisa tu conexión a internet e inténtalo de nuevo.'); return; }
+    guardarViaje(); usarFuente('viaje');
+    estadoViaje('');
+    renderInicio();
+    $('previa').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } finally { $('btn-calcular').disabled = false; }
+}
+
+function invertirViaje() {
+  const tO = $('in-origen').value, tD = $('in-destino').value;
+  let nuevoDestino = formViaje.origen, nuevoOrigen = formViaje.destino;
+  let textoDestino = tO;
+  if (!tO.trim() && viaje && viaje.origen.gps) {   // salías de tu ubicación: la vuelta llega a ese punto
+    nuevoDestino = { ...viaje.origen, nombre: 'Punto de partida anterior', gps: false };
+    textoDestino = nuevoDestino.nombre;
+  }
+  $('in-origen').value = tD; $('in-destino').value = textoDestino;
+  formViaje.origen = nuevoOrigen; formViaje.destino = nuevoDestino;
+  estadoViaje(textoDestino ? 'Origen y destino invertidos: toca "Calcular ruta".' : 'Escribe a dónde vas.');
+}
+
+async function recalcularViaje(f) {
+  if (!navigator.onLine) { nav.fueraCuenta = 0; return; }
+  nav.recalculando = true;
+  decir('Recalculando la ruta.', { urgente: true });
+  try {
+    const nuevo = await calcularRutaViaje({ nombre: 'Tu ubicación', lat: f.lat, lon: f.lon, gps: true }, viaje.destino);
+    if (!nav.activo) return;
+    viaje = nuevo; guardarViaje();
+    const puntos = puntosParaNavegar(viaje.tramo, '');
+    Object.assign(nav, { tramo: viaje.tramo, puntos, geo: prepararGeometria(trazadoPara(viaje.tramo, ''), puntos),
+                         idx: -1, min: Infinity, alertas: {}, sProg: null, sMax: -Infinity, contrario: false });
+    prepararMapaHud();
+    decir('Ruta nueva lista.');
+  } catch (e) { toast('Sin conexión para recalcular: sigue la señalización.'); }
+  finally { nav.recalculando = false; nav.fueraCuenta = 0; }
+}
+
+// ---- Favoritas
+const mismoLugar = (a, b) => a && b && Math.abs(a.lat - b.lat) < 1e-4 && Math.abs(a.lon - b.lon) < 1e-4;
+function favoritoDe(v) {
+  return v && favoritos.find(f => mismoLugar(f.destino, v.destino) && (f.origen.gps ? v.origen.gps : mismoLugar(f.origen, v.origen)));
+}
+
+function alternarFavorito() {
+  if (!viaje) return;
+  const f = favoritoDe(viaje);
+  if (f) {
+    if (!confirm(`¿Quitar "${f.nombre}" de tus favoritas?`)) return;
+    favoritos = favoritos.filter(x => x !== f);
+  } else {
+    const sugerido = `${viaje.origen.gps ? 'Mi ubicación' : viaje.origen.nombre} → ${viaje.destino.nombre}`;
+    const nombre = prompt('Nombre para esta ruta favorita:', sugerido);
+    if (nombre === null) return;
+    favoritos.unshift({ id: uid(), nombre: nombre.trim() || sugerido, ...JSON.parse(JSON.stringify(viaje)) });
+    toast('Guardada en ⭐ Mis rutas');
+  }
+  guardarFavoritos(); renderInicio();
+}
+
+async function usarFavorito(f) {
+  formViaje.origen = f.origen.gps ? null : f.origen; formViaje.destino = f.destino;
+  $('in-origen').value = f.origen.gps ? '' : f.origen.nombre; $('in-destino').value = f.destino.nombre;
+  viaje = normalizarViaje(JSON.parse(JSON.stringify(f)));   // funciona sin señal con la ruta guardada
+  guardarViaje(); usarFuente('viaje'); renderInicio();
+  if (navigator.onLine) {
+    // Con internet, actualiza (y si sales de tu ubicación, calcula desde donde estás)
+    try {
+      let origen = f.origen;
+      if (f.origen.gps) { const u = await ubicacionActual(); origen = { nombre: 'Tu ubicación', lat: u.lat, lon: u.lon, gps: true }; }
+      const nuevo = await calcularRutaViaje(origen, f.destino);
+      viaje = nuevo; guardarViaje(); renderInicio();
+    } catch (e) { /* se queda la ruta guardada */ }
+  }
+  $('previa').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderFavoritos() {
+  const cont = $('favoritos-lista'); cont.innerHTML = '';
+  if (!favoritos.length) {
+    const p = document.createElement('p'); p.className = 'vacio';
+    p.textContent = 'Aún no tienes favoritas. En "¿A dónde vas?", calcula una ruta y toca ☆ Guardar en favoritas.';
+    cont.appendChild(p); return;
+  }
+  favoritos.forEach(f => {
+    const fila = document.createElement('div'); fila.className = 'favorito';
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'lugar'; b.textContent = '⭐ ' + f.nombre;
+    const geo = prepararGeometria(f.tramo.trazados['*'] || null, f.tramo.puntos);
+    const min = f.tramo.duraciones['*'];
+    const sm = document.createElement('small');
+    sm.textContent = `${(geo.total / 1000).toFixed(1)} km${min ? ` · ~${Math.round(min)} min` : ''}${f.origen.gps ? ' · sale de donde estés' : ''}`;
+    b.appendChild(sm);
+    b.addEventListener('click', () => usarFavorito(f));
+    const del = boton('🗑', 'Quitar de favoritas', () => {
+      if (!confirm(`¿Quitar "${f.nombre}" de tus favoritas?`)) return;
+      favoritos = favoritos.filter(x => x !== f); guardarFavoritos(); renderInicio();
+    });
+    fila.append(b, del); cont.appendChild(fila);
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -1790,7 +2187,15 @@ function renderInicio() {
 const previa = { mapa: null, capa: null, puntos: [] };
 
 function renderPrevia() {
-  const r = rutaSel(), t = r[sel.sentido], dest = sel.destino;
+  const ctx = contexto();
+  $('previa').hidden = !ctx; $('bloque-iniciar').hidden = !ctx;
+  if (!ctx) return;
+  const r = ctx.ruta, t = ctx.tramo, dest = ctx.destId;
+  $('previa-titulo').textContent = ctx.tipo === 'viaje'
+    ? `${viaje.origen.gps ? 'Tu ubicación' : viaje.origen.nombre} → ${viaje.destino.nombre}`
+    : `${t.nombre}${dest ? ' · ' + nombreDestino(t, dest) : ''}`;
+  $('btn-favorito').hidden = ctx.tipo !== 'viaje';
+  if (ctx.tipo === 'viaje') $('btn-favorito').textContent = favoritoDe(viaje) ? '★ En favoritas' : '☆ Guardar en favoritas';
   const puntos = puntosParaNavegar(t, dest);
   previa.puntos = puntos;
   const traz = trazadoPara(t, dest);
@@ -1821,7 +2226,11 @@ function renderPrevia() {
     const lejos = puntos.filter(p => p.tipo !== 'rotonda').map(p => ({ p, d: proyectar(geo, p).d })).filter(x => x.d > 60);
     if (lejos.length) alertas.push(`Lejos del camino: ${lejos.map(x => `${x.p.nombre} (${Math.round(x.d)} m)`).join(', ')}.`);
   }
-  if (!r.verificada) alertas.push('Ruta sin verificar: revisa los puntos en la vía antes de confiar en ella.');
+  if (ctx.tipo === 'viaje') {
+    const propios = t.puntos.filter(p => p.fuente === 'propio').length;
+    alertas.push('Ruta calculada con datos de OpenStreetMap: confirma siempre con la señalización.' +
+                 (propios ? ` Incluye ${propios} aviso(s) tuyo(s).` : ''));
+  } else if (!r.verificada) alertas.push('Ruta sin verificar: revisa los puntos en la vía antes de confiar en ella.');
   const ca = $('previa-alertas'); ca.innerHTML = '';
   alertas.forEach(a => { const d = document.createElement('div'); d.className = 'previa-alerta'; d.textContent = '⚠ ' + a; ca.appendChild(d); });
 
@@ -1832,7 +2241,7 @@ function renderPrevia() {
     const ic = document.createElement('div'); ic.className = 'hud-flecha'; pintarDibujo(ic, p);
     const tx = document.createElement('div'); tx.className = 'previa-tx';
     const km = isFinite(geo.sPuntos[i]) ? `km ${(Math.max(0, geo.sPuntos[i]) / 1000).toFixed(1)} · ` : '';
-    const b = document.createElement('b'); b.textContent = `${i + 1}. ${p.nombre}`;
+    const b = document.createElement('b'); b.textContent = `${i + 1}. ${p.nombre}${(t.puntos.find(x => x.id === p.id) || {}).fuente === 'propio' ? ' ⭐' : ''}`;
     const sub = document.createElement('span');
     sub.textContent = km + (p.tipo === 'rotonda'
       ? (p.salida ? `${cap(ORD[p.salida])} salida${p.calleSalida ? ', por ' + p.calleSalida : ''}` : 'Salida sin definir')
@@ -1857,6 +2266,10 @@ function renderPrevia() {
   const ll = geo.linea.map(p => [p.lat, p.lon]);
   if (ll.length >= 2) L.polyline(ll, traz ? { color: '#00ff66', weight: 5, opacity: .8 } : { color: '#00ff66', weight: 3, opacity: .6, dashArray: '6 10' }).addTo(previa.capa);
   puntos.forEach((p, i) => L.marker([p.lat, p.lon], { icon: iconoNumero(i + 1, '', p.tipo), keyboard: false, interactive: false }).addTo(previa.capa));
+  if (ctx.tipo === 'viaje') {
+    L.circleMarker([viaje.origen.lat, viaje.origen.lon], { radius: 8, color: '#fff', weight: 3, fillColor: '#2f8cff', fillOpacity: 1, interactive: false }).addTo(previa.capa);
+    L.circleMarker([viaje.destino.lat, viaje.destino.lon], { radius: 9, color: '#fff', weight: 3, fillColor: '#ff3b3b', fillOpacity: 1, interactive: false }).addTo(previa.capa);
+  }
   setTimeout(() => {
     previa.mapa.invalidateSize();
     const bnds = L.latLngBounds(ll.length ? ll : puntos.map(p => [p.lat, p.lon]));
@@ -1867,11 +2280,12 @@ function renderPrevia() {
 let repasando = false;
 function repasarRuta() {
   if (repasando) { callarVoz(); repasando = false; $('btn-repasar').textContent = '🔊 Repasar en voz alta'; return; }
-  const t = rutaSel()[sel.sentido], dest = nombreDestino(t, sel.destino);
+  const ctx = contexto(); if (!ctx) return;
+  const t = ctx.tramo, dest = ctx.tipo === 'viaje' ? '' : nombreDestino(t, ctx.destId);
   callarVoz();
   repasando = true; $('btn-repasar').textContent = '⏹ Detener repaso';
-  decir(`Repaso de la ruta ${t.nombre}${dest ? ', destino ' + dest : ''}. ${previa.puntos.length} puntos.`);
-  previa.puntos.forEach((p, i) => decir(`Punto ${i + 1}, ${p.nombre}. ${p.corta}`));
+  decir(`Repaso de la ruta ${t.nombre}${dest ? ', destino ' + dest : ''}. ${previa.puntos.length} indicaciones.`);
+  previa.puntos.forEach((p, i) => decir(`${i + 1}. ${p.nombre}. ${p.corta}`));
   decir('Fin del repaso.');
   const vigilar = setInterval(() => {
     if (!voz.hablando && !voz.cola.length) { clearInterval(vigilar); repasando = false; $('btn-repasar').textContent = '🔊 Repasar en voz alta'; }
@@ -1892,11 +2306,19 @@ function renderAjustes() {
 }
 
 // ---- Eventos: inicio
-$('sel-ruta').addEventListener('change', e => { sel.rutaId = e.target.value; sel.destino = ''; renderInicio(); });
+$('sel-ruta').addEventListener('change', e => { sel.rutaId = e.target.value; sel.destino = ''; usarFuente('avanzada'); renderInicio(); });
 ['btn-ida', 'btn-vuelta'].forEach(id => $(id).addEventListener('click', e => {
-  sel.sentido = e.currentTarget.dataset.sentido; sel.destino = ''; renderInicio();
+  sel.sentido = e.currentTarget.dataset.sentido; sel.destino = ''; usarFuente('avanzada'); renderInicio();
 }));
-$('sel-destino').addEventListener('change', e => { sel.destino = e.target.value; renderInicio(); });
+$('sel-destino').addEventListener('change', e => { sel.destino = e.target.value; usarFuente('avanzada'); renderInicio(); });
+$('btn-usar-avanzada').addEventListener('click', () => { usarFuente('avanzada'); renderInicio(); $('previa').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+$('tab-buscar').addEventListener('click', () => setModoInicio('buscar'));
+$('tab-rutas').addEventListener('click', () => setModoInicio('rutas'));
+$('form-viaje').addEventListener('submit', calcularViaje);
+$('in-origen').addEventListener('input', () => { formViaje.origen = null; });
+$('in-destino').addEventListener('input', () => { formViaje.destino = null; });
+$('btn-invertir').addEventListener('click', invertirViaje);
+$('btn-favorito').addEventListener('click', alternarFavorito);
 $('btn-repasar').addEventListener('click', repasarRuta);
 $('btn-conductor').addEventListener('click', () => { if (repasando) repasarRuta(); iniciarNavegacion('conductor'); });
 $('btn-simular').addEventListener('click', () => { if (repasando) repasarRuta(); iniciarNavegacion('simulador'); });
@@ -1991,6 +2413,11 @@ $('f-ubicacion').addEventListener('click', () => {
 });
 
 // ---- Arranque
+if (viaje) {
+  if (!viaje.origen.gps) { $('in-origen').value = viaje.origen.nombre; formViaje.origen = viaje.origen; }
+  $('in-destino').value = viaje.destino.nombre; formViaje.destino = viaje.destino;
+}
+if (!fuente && !viaje) { /* primera vez: nada elegido todavía */ }
 renderInicio();
 renderAjustes();
 cargarVoces();
