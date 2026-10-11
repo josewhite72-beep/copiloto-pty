@@ -173,6 +173,7 @@ function normalizarPunto(p) {
     variantes,
     rotGeo: normalizarRotGeo(p.rotGeo),
     calle: String(p.calle || ''),          // calle de salida (rotondas calculadas)
+    rotDiag: String(p.rotDiag || ''),      // por qué no se obtuvo la forma real de la rotonda
     fuente: String(p.fuente || '')         // 'auto' = maniobra calculada, 'propio' = aviso tuyo
   };
 }
@@ -1768,9 +1769,15 @@ function analizarRotondas(data) {
     ws.forEach(w => { for (let i = 0; i < w.nodes.length - 1; i++) { sig.set(w.nodes[i], w.nodes[i + 1]); tienePrevio.add(w.nodes[i + 1]); } });
     let inicio = ws[0].nodes[0];
     for (const n of sig.keys()) if (!tienePrevio.has(n)) { inicio = n; break; }
-    const pos = new Map(); let n = inicio;
+    let pos = new Map(); let n = inicio;
     while (n != null && !pos.has(n)) { pos.set(n, pos.size); n = sig.get(n); }
-    const cerrado = n != null && n === inicio;     // el anillo da la vuelta completa
+    let cerrado = n != null && n === inicio;       // el anillo da la vuelta completa
+    if (!cerrado) {
+      // A veces algún tramo del anillo está dibujado al revés en OSM: si sin importar el sentido
+      // los tramos forman un anillo cerrado, se reconstruye y se orienta antihorario (circulación por la derecha).
+      const orden = anilloSinSentido(ws, coord);
+      if (orden) { pos = new Map(orden.map((id, i) => [id, i])); cerrado = true; }
+    }
     const L = pos.size;
     const pts = [...pos.keys()].map(id => coord.get(id)).filter(Boolean);
     if (L < 3 || !pts.length) return;
@@ -1825,6 +1832,31 @@ function cajasCorredor(lineas, margen) {
     if (caja) cajas.push(caja);
   });
   return cajas.map(c => [c[0] - margen, c[1] - margen, c[2] + margen, c[3] + margen]);
+}
+
+function anilloSinSentido(ws, coord) {
+  const ady = new Map();
+  const unir = (a, b) => { if (a === b) return; if (!ady.has(a)) ady.set(a, new Set()); ady.get(a).add(b); };
+  ws.forEach(w => { for (let i = 0; i < w.nodes.length - 1; i++) { unir(w.nodes[i], w.nodes[i + 1]); unir(w.nodes[i + 1], w.nodes[i]); } });
+  if (ady.size < 3 || ![...ady.values()].every(v => v.size === 2)) return null;   // con ramales no es un anillo simple
+  const ini = ady.keys().next().value, orden = [ini];
+  let prev = null, cur = ini;
+  while (orden.length <= ady.size) {
+    const sig = [...ady.get(cur)].find(x => x !== prev);
+    if (sig === ini) break;
+    if (sig == null || orden.includes(sig)) return null;
+    orden.push(sig); prev = cur; cur = sig;
+  }
+  if (orden.length !== ady.size) return null;
+  const pts = orden.map(id => coord.get(id));
+  if (pts.some(p => !p)) return null;
+  const k = Math.cos(pts[0].lat * RAD);
+  let area = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    area += a.lon * k * b.lat - b.lon * k * a.lat;
+  }
+  return area < 0 ? orden.reverse() : orden;   // área positiva = antihorario
 }
 
 function lineasTramo(t) {
@@ -2309,7 +2341,8 @@ async function calcularRutaViaje(origen, destino) {
   const tramo = normalizarTramo({ nombre: `Hacia ${destino.nombre}`, destinos: [], trazados: { '*': trazado },
                                   duraciones: { '*': ruta.duration / 60 }, puntos }, 'Viaje');
   ordenarPorTrazado(tramo, '*');
-  try { await enriquecerRotondas(tramo); } catch (e) { /* sin datos de rotondas: se usan los de la ruta */ }
+  try { await enriquecerRotondas(tramo); }
+  catch (e) { tramo.puntos.forEach(p => { if (p.tipo === 'rotonda' && !p.rotGeo) p.rotDiag = 'error al analizar la rotonda'; }); }
   return { origen, destino, tramo, creado: Date.now() };
 }
 
@@ -2323,24 +2356,28 @@ async function enriquecerRotondas(tramo) {
   // En OSM una rotonda suele venir partida en muchos tramos: se buscan en 250 m alrededor de la entrada
   // para traer el anillo completo aunque la rotonda sea grande (solo se usan anillos cerrados).
   const q = `[out:json][timeout:25];(${partes})->.r;node(w.r)->.n;way(bn.n)["highway"]->.c;(.r;.c;);out geom tags;`;
-  const lista = analizarRotondas(await consultarOverpassQ(q, 20000)).filter(r => r.cerrado);
-  if (!lista.length) return;
+  let lista;
+  try { lista = analizarRotondas(await consultarOverpassQ(q, 20000)); }
+  catch (e) { rots.forEach(p => { p.rotDiag = 'sin respuesta de OpenStreetMap'; }); return; }
   const geo = prepararGeometria(traz, []);
   rots.forEach(p => {
-    const r = lista.filter(x => distancia(x.centro, p) < x.radio + 70).sort((a, b) => distancia(a.centro, p) - distancia(b.centro, p))[0];
-    if (!r) return;
+    const cerca = lista.filter(x => distancia(x.centro, p) < x.radio + 70).sort((a, b) => distancia(a.centro, p) - distancia(b.centro, p));
+    if (!cerca.length) { p.rotDiag = 'no hay rotonda mapeada en ese punto'; return; }
+    const r = cerca.find(x => x.cerrado);
+    if (!r) { p.rotDiag = 'el anillo está incompleto o con ramales en el mapa'; return; }
     const cruce = cruceDeRotonda(geo, r, proyectar(geo, p).s);
-    if (!cruce) return;
+    if (!cruce) { p.rotDiag = 'el camino no coincide con el anillo mapeado'; return; }
     const g = normalizarRotGeo({ osm: r.osm, L: r.L, radio: r.radio, conexiones: r.conexiones, lat: r.centro.lat, lon: r.centro.lon,
                                  entrada: adivinarEntrada({ conexiones: r.conexiones }, r.centro, cruce.antes) });
-    if (!g || g.entrada == null) return;
+    if (!g || g.entrada == null) { p.rotDiag = 'no se identificó la calle de entrada'; return; }
     // La salida que toma la ruta: la calle de salida con el rumbo más parecido al del camino al salir
     const bs = rumbo(r.centro, cruce.despues);
     const cand = g.conexiones.map((c, i) => ({ c, i })).filter(o => o.c.salida);
     if (!cand.length) return;
     const tomada = cand.reduce((m, o) => difAng(o.c.rumbo, bs) < difAng(m.c.rumbo, bs) ? o : m);
     const k = salidasDe(g).findIndex(c => c.i === tomada.i) + 1;
-    if (k < 1) return;
+    if (k < 1) { p.rotDiag = 'no se identificó la salida'; return; }
+    p.rotDiag = '';
     p.rotGeo = g;
     p.salida = k;
     if (!p.calle || /sin nombre/i.test(p.calle)) p.calle = tomada.c.nombre;
@@ -2530,8 +2567,10 @@ function renderPrevia() {
   if (puntos.length && !traz) alertas.push('Sin camino por la vía: las distancias son en línea recta. En el editor, toca "Trazar por carretera" o graba la ruta.');
   if (!dest && t.destinos.length && nRot) alertas.push('Elige un destino para ver qué salida tomar en cada rotonda.');
   if (ctx.tipo === 'viaje') {
-    const sinForma = puntos.filter(p => p.tipo === 'rotonda' && !p.rotGeo).length;
-    if (sinForma) alertas.push(`${sinForma} rotonda(s) sin forma real en OpenStreetMap (o sin conexión al calcular): se muestran con dibujo aproximado y sin globos de salidas. Vuelve a calcular la ruta con buena señal.`);
+    puntos.filter(p => p.tipo === 'rotonda' && !p.rotGeo).forEach(p => {
+      const diag = (t.puntos.find(x => x.id === p.id) || {}).rotDiag || 'sin datos';
+      alertas.push(`${p.nombre}: sin forma real (${diag}). Se muestra con dibujo aproximado y sin globos de salidas.`);
+    });
   }
   puntos.filter(p => p.tipo === 'rotonda').forEach(p => {
     const orig = t.puntos.find(x => x.id === p.id);
