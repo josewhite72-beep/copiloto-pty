@@ -22,10 +22,10 @@ const CFG = {
   velBloqueo: 10 / 3.6,    // m/s: por encima se bloquean los controles del conductor
   grabarCada: 15,          // m entre puntos del trazado grabado
   grabarPrecision: 50,     // m: precisión mínima para grabar
-  tileUrl: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-  tileAttr: '© OpenStreetMap · © CARTO',
-  zMin: 12, zMax: 16, maxTiles: 3000,
-  tileCache: 'copiloto-tiles-v1'
+  // Mapa base de OpenStreetMap (sin clave). Sus reglas permiten ver el mapa y reusar lo ya visto,
+  // pero NO descargar zonas completas para usar sin señal. El tema oscuro se aplica con CSS.
+  tileUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  tileAttr: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'
 };
 
 const LS_RUTAS = 'copiloto.rutas.v2';
@@ -563,7 +563,7 @@ function setChip(el, texto, clase) { el.textContent = texto; el.className = 'chi
 
 function crearMapa(id) {
   const m = L.map(id, { zoomControl: false, attributionControl: true });
-  L.tileLayer(CFG.tileUrl, { subdomains: 'abcd', maxZoom: 19, attribution: CFG.tileAttr }).addTo(m);
+  L.tileLayer(CFG.tileUrl, { maxZoom: 19, attribution: CFG.tileAttr, crossOrigin: true }).addTo(m);
   m.setView([8.95, -79.65], 11);
   return m;
 }
@@ -1607,83 +1607,6 @@ function importarJSON(file) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Mapa sin señal: tiles del corredor (ida + vuelta + trazados)        */
-/* ------------------------------------------------------------------ */
-
-function tileXY(p, z) {
-  const n = 2 ** z, lat = p.lat * RAD;
-  return [Math.floor((p.lon + 180) / 360 * n),
-          Math.floor((1 - Math.log(Math.tan(lat) + 1 / Math.cos(lat)) / Math.PI) / 2 * n)];
-}
-
-function lineasDeRuta(r) {
-  const lineas = [];
-  SENTIDOS.forEach(s => {
-    const t = r[s];
-    Object.values(t.trazados).forEach(tr => lineas.push(tr.map(([lat, lon]) => ({ lat, lon }))));
-    if (t.puntos.length) lineas.push(t.puntos.map(p => ({ lat: p.lat, lon: p.lon })));
-  });
-  return lineas;
-}
-
-function urlsTilesRuta(lineas) {
-  const retina = (window.devicePixelRatio || 1) > 1 ? '@2x' : '';
-  const set = new Set();
-  for (let z = CFG.zMin; z <= CFG.zMax; z++) {
-    const n = 2 ** z;
-    lineas.forEach(linea => {
-      if (!linea.length) return;
-      const anchoTile = 40075016 * Math.cos(linea[0].lat * RAD) / n;
-      densificar(linea, anchoTile / 3).forEach(p => {
-        const [x, y] = tileXY(p, z);
-        for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
-          const tx = x + dx, ty = y + dy;
-          if (tx >= 0 && ty >= 0 && tx < n && ty < n) set.add(`${z}/${tx}/${ty}`);
-        }
-      });
-    });
-  }
-  return [...set].map(k => `https://a.basemaps.cartocdn.com/dark_all/${k}${retina}.png`);
-}
-
-let descargando = false;
-async function descargarMapaRuta() {
-  if (descargando) return;
-  if (!('caches' in window)) { alert('Este navegador no permite guardar el mapa.'); return; }
-  const r = rutaSel();
-  const lineas = lineasDeRuta(r);
-  if (!lineas.length) { alert('La ruta no tiene puntos.'); return; }
-  const urls = urlsTilesRuta(lineas);
-  if (urls.length > CFG.maxTiles) { alert(`La ruta es muy extensa (${urls.length} imágenes). Divídela en rutas más cortas.`); return; }
-  const mb = Math.max(1, Math.round(urls.length * 20 / 1024));
-  if (!confirm(`Se guardarán ${urls.length} imágenes del mapa alrededor de la ida y la vuelta (≈${mb} MB).\nRecomendado: con Wi-Fi.\n\n¿Continuar?`)) return;
-
-  descargando = true;
-  const estado = $('descarga-estado');
-  const cache = await caches.open(CFG.tileCache);
-  let i = 0, hechos = 0, fallos = 0;
-  const trabajador = async () => {
-    while (i < urls.length) {
-      const url = urls[i++];
-      try {
-        if (!(await cache.match(url))) {
-          let res;
-          try { res = await fetch(url, { mode: 'cors' }); } catch (e) { res = await fetch(url, { mode: 'no-cors' }); }
-          if (res.ok || res.type === 'opaque') await cache.put(url, res); else fallos++;
-        }
-      } catch (e) { fallos++; }
-      hechos++;
-      if (hechos % 5 === 0 || hechos === urls.length) estado.textContent = `Guardando mapa… ${hechos}/${urls.length}`;
-    }
-  };
-  await Promise.all([trabajador(), trabajador(), trabajador(), trabajador()]);
-  descargando = false;
-  estado.textContent = fallos
-    ? `Mapa guardado con ${fallos} imagen(es) faltante(s). Vuelve a intentarlo con mejor señal.`
-    : `✔ Mapa de "${r.nombre}" guardado para usar sin señal.`;
-}
-
-/* ------------------------------------------------------------------ */
 /* Pantalla de inicio y ajustes                                        */
 /* ------------------------------------------------------------------ */
 
@@ -1719,7 +1642,7 @@ function renderAjustes() {
 }
 
 // ---- Eventos: inicio
-$('sel-ruta').addEventListener('change', e => { sel.rutaId = e.target.value; sel.destino = ''; renderInicio(); $('descarga-estado').textContent = ''; });
+$('sel-ruta').addEventListener('change', e => { sel.rutaId = e.target.value; sel.destino = ''; renderInicio(); });
 ['btn-ida', 'btn-vuelta'].forEach(id => $(id).addEventListener('click', e => {
   sel.sentido = e.currentTarget.dataset.sentido; sel.destino = ''; renderInicio();
 }));
@@ -1731,7 +1654,6 @@ $('btn-grabar').addEventListener('click', iniciarGrabacion);
 $('btn-marcar').addEventListener('click', marcarAqui);
 $('btn-terminar-grab').addEventListener('click', terminarGrabacion);
 $('btn-editor').addEventListener('click', abrirEditor);
-$('btn-descargar').addEventListener('click', descargarMapaRuta);
 
 // ---- Eventos: ajustes de voz
 $('aj-voz').addEventListener('change', e => { ajustes.voz = e.target.value; escribirLS(LS_AJ, ajustes); });

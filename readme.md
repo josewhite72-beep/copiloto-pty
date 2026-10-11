@@ -10,8 +10,8 @@ un diagrama de carriles y un texto grande.
 
 ```
 index.html        Interfaz: inicio, HUD, grabación y editor
-app.js            Motor: rutas, GPS, avisos, simulador, editor, mapa sin señal
-sw.js             Service Worker (v8): app sin conexión + caché del mapa
+app.js            Motor: rutas, GPS, avisos, simulador, editor, rotondas OSM
+sw.js             Service Worker (v9): app sin conexión + caché del mapa ya visto
 manifest.json     Instalación PWA
 icons/            íconos normales, maskable (Android), apple-touch y favicon
 lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
@@ -46,9 +46,8 @@ lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
    Toca **📍 Marcar aquí** en cada punto crítico. Al terminar se abre el editor.
 2. **Editar.** Elige Ida o Vuelta, agrega destinos y completa cada punto: tipo, "aplica a", instrucción general e
    instrucción por destino. "Crear vuelta a partir de la ida" copia los puntos en orden inverso para revisarlos.
-3. **Guardar mapa sin señal** (ida + vuelta) con Wi‑Fi.
-4. **Simular** a 60/80/100 km/h (×1, ×5, ×10).
-5. **Conductor.** Teléfono en soporte. Por encima de 10 km/h los controles se bloquean; tocar la tarjeta repite el aviso.
+3. **Simular** a 60/80/100 km/h (×1, ×5, ×10).
+4. **Conductor.** Teléfono en soporte. Por encima de 10 km/h los controles se bloquean; tocar la tarjeta repite el aviso.
 
 ## Lógica de navegación
 
@@ -93,5 +92,7 @@ lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
 ## Notas
 
 - La ruta de ejemplo trae coordenadas, carriles y destinos **sin verificar**, y ninguna rotonda real.
-- Mapa base: CARTO Dark Matter (datos © OpenStreetMap). La descarga del corredor está limitada a 3000 imágenes.
+- Mapa base: OpenStreetMap estándar (sin clave) con tema oscuro por CSS. Según sus reglas solo se reusa lo ya visto
+  (caché de 7 días); no se descargan zonas completas. Sin señal, la voz, la flecha y los carriles siguen funcionando.
+  (CARTO dejó de servir mapas sin clave de API.)
 - Requiere HTTPS (Vercel) para el GPS, la instalación y el Service Worker.

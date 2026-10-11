@@ -1,9 +1,10 @@
 // Service Worker – Copiloto de Ruta
 // App: red primero (con límite de 3 s) para recibir actualizaciones; si no hay señal, usa la caché.
-// Mapa: caché primero; los tiles descargados con "Guardar mapa de esta ruta" quedan aquí.
+// Mapa (OpenStreetMap): se reusa lo ya visto; no se descargan zonas completas.
 
-const APP_CACHE = 'copiloto-app-v8';
-const TILE_CACHE = 'copiloto-tiles-v1';
+const APP_CACHE = 'copiloto-app-v9';
+const TILE_CACHE = 'copiloto-osm-v1';
+const TILE_MAX_DIAS = 7; // las reglas de OpenStreetMap piden reusar lo ya visto al menos 7 días
 
 const ASSETS = [
   './',
@@ -36,22 +37,19 @@ self.addEventListener('activate', e => {
   );
 });
 
-// Misma clave para a/b/c/d.basemaps.cartocdn.com (app.js usa la misma regla)
-function claveTile(url) {
-  return url.replace(/\/\/[a-d]\.basemaps\.cartocdn\.com\//, '//a.basemaps.cartocdn.com/');
-}
-
+// Mapa: reusa lo ya visto (hasta 7 días); luego lo pide de nuevo. Sin señal, sirve lo guardado.
 async function tileCacheFirst(req) {
   const cache = await caches.open(TILE_CACHE);
-  const clave = claveTile(req.url);
-  const guardado = await cache.match(clave);
-  if (guardado) return guardado;
+  const guardado = await cache.match(req);
+  const fecha = guardado && Date.parse(guardado.headers.get('date') || '');
+  const fresco = guardado && fecha && (Date.now() - fecha) < TILE_MAX_DIAS * 864e5;
+  if (fresco) return guardado;
   try {
     const res = await fetch(req);
-    if (res.ok || res.type === 'opaque') cache.put(clave, res.clone());
+    if (res.ok || res.type === 'opaque') cache.put(req, res.clone());
     return res;
   } catch (err) {
-    return new Response('', { status: 504, statusText: 'Offline' });
+    return guardado || new Response('', { status: 504, statusText: 'Offline' });
   }
 }
 
@@ -74,7 +72,7 @@ self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.hostname.endsWith('basemaps.cartocdn.com')) {
+  if (url.hostname === 'tile.openstreetmap.org') {
     e.respondWith(tileCacheFirst(req));
   } else if (url.origin === self.location.origin) {
     e.respondWith(redPrimero(req));

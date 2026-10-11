@@ -107,6 +107,11 @@
     .mapa { flex: 1; min-height: 200px; border-radius: 12px; border: 2px solid var(--borde); background: #222; }
     .mapa-editor { flex: none; height: 46vh; min-height: 260px; }
     .leaflet-container { font: inherit; }
+    /* Tema oscuro para los mapas de OpenStreetMap */
+    .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.6); }
+    .leaflet-container { background: #1a1a1a; }
+    .leaflet-control-attribution { background: rgba(20,20,20,.75) !important; color: #bbb; }
+    .leaflet-control-attribution a { color: #8fd; }
     .pin-num { background: none; border: none; }
     .pin-num span { display: flex; width: 26px; height: 26px; border-radius: 50%; align-items: center; justify-content: center;
       background: var(--azul); color: #fff; font-weight: 800; font-size: 13px; border: 2px solid #fff; box-shadow: 0 1px 4px #000; }
@@ -216,8 +221,7 @@
 
     <button id="btn-grabar" class="btn btn-gris">🎙️ Grabar ruta (solo acompañante)</button>
     <button id="btn-editor" class="btn btn-gris">✏️ Editar rutas y puntos</button>
-    <button id="btn-descargar" class="btn btn-gris">⬇️ Guardar mapa de esta ruta para usar sin señal</button>
-    <p id="descarga-estado" class="info"></p>
+    <p class="info">📶 Sin señal: los avisos de voz, la flecha y los carriles siguen funcionando. El mapa muestra lo que ya se vio antes con datos.</p>
 
     <details class="tarjeta">
       <summary>🔊 Voz</summary>
