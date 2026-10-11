@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Copiloto de Ruta</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#111111">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <!-- Leaflet local: funciona sin depender de un CDN -->
+  <link rel="stylesheet" href="lib/leaflet.css">
+  <style>
+    :root {
+      --bg: #111111; --panel: #1c1c1c; --panel2: #262626; --borde: #333333;
+      --texto: #ffffff; --suave: #a8a8a8;
+      --verde: #00ff66; --amarillo: #ffcc00; --rojo: #ff3b3b; --azul: #2f8cff;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--texto);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+    button, input, select, textarea { font: inherit; }
+
+    .pantalla { display: none; flex-direction: column; gap: 10px; width: 100%; max-width: 640px; margin: 0 auto;
+      min-height: 100%; padding: max(12px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); }
+    .pantalla.activa { display: flex; }
+
+    /* ---------- Inicio ---------- */
+    .cabecera h1 { margin: 6px 0 0; font-size: 26px; color: var(--verde); }
+    .cabecera .sub { margin: 2px 0 6px; color: var(--suave); }
+    .tarjeta { background: var(--panel); border: 1px solid var(--borde); border-radius: 12px; padding: 12px; }
+    .etq { display: block; font-size: 13px; color: var(--suave); margin: 8px 0 4px; }
+    .etq:first-child { margin-top: 0; }
+    select, input, textarea {
+      width: 100%; background: var(--panel2); color: var(--texto); border: 1px solid var(--borde);
+      border-radius: 8px; padding: 10px; font-size: 16px;
+    }
+    textarea { resize: vertical; }
+    .info { margin: 6px 0 0; font-size: 13px; color: var(--suave); }
+    .fila { display: flex; gap: 8px; align-items: stretch; }
+    .fila > * { min-width: 0; }
+    .fila .col { flex: 1; }
+    .fila-wrap { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .btn { width: 100%; padding: 15px; font-size: 16px; font-weight: 700; border: none; border-radius: 12px; cursor: pointer; }
+    .btn:active { transform: scale(.98); }
+    .btn-verde { background: var(--verde); color: #000; }
+    .btn-azul { background: var(--azul); color: #fff; }
+    .btn-gris { background: var(--panel2); color: var(--texto); border: 1px solid var(--borde); }
+    .btn-rojo { background: var(--rojo); color: #fff; }
+    .btn-amarillo { background: var(--amarillo); color: #000; }
+    .btn-grande { padding: 26px; font-size: 22px; }
+    .fila .btn { flex: 1; }
+    .fila select { width: auto; flex: 0 0 auto; }
+    .btn-mini { padding: 9px 12px; font-size: 14px; border-radius: 8px; border: 1px solid var(--borde);
+      background: var(--panel2); color: var(--texto); cursor: pointer; display: inline-block; white-space: nowrap; }
+    .btn-mini.primario { background: var(--verde); color: #000; border-color: var(--verde); font-weight: 700; }
+    .btn-mini.peligro { color: var(--rojo); border-color: #5a2222; }
+    .btn-link { background: none; border: none; color: var(--verde); font-size: 16px; padding: 4px 0; cursor: pointer; }
+    .check { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 14px; }
+    .check input { width: auto; }
+    details summary { cursor: pointer; font-weight: 700; }
+    input[type=range] { padding: 0; }
+    .aviso-seguridad { font-size: 13px; color: var(--suave); border-left: 3px solid var(--amarillo); padding-left: 10px; margin: 4px 0; }
+
+    /* ---------- HUD ---------- */
+    .hud { height: 100%; min-height: 100vh; min-height: 100dvh; }
+    .hud-barra { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 14px; color: var(--suave); }
+    .chips { display: flex; gap: 6px; flex-shrink: 0; }
+    .chip { background: var(--panel); border: 1px solid var(--borde); border-radius: 999px; padding: 3px 10px; font-size: 13px; white-space: nowrap; }
+    .chip.ok { color: var(--verde); }
+    .chip.warn { color: var(--amarillo); }
+    .chip.bad { color: var(--rojo); }
+    .hud-tarjeta { display: flex; align-items: center; gap: 14px; background: var(--panel); border: 1px solid var(--borde);
+      border-radius: 16px; padding: 12px 14px; cursor: pointer; user-select: none; }
+    .hud-flecha { width: 92px; height: 92px; flex: 0 0 92px; color: var(--verde); }
+    .hud-flecha svg { width: 100%; height: 100%; display: block; }
+    .hud-flecha.precaucion { color: var(--amarillo); }
+    .hud-datos { min-width: 0; }
+    .hud-dist { font-size: 52px; line-height: 1; font-weight: 800; color: var(--verde); font-variant-numeric: tabular-nums; }
+    .hud-nombre { font-size: 18px; color: var(--suave); margin-top: 4px; overflow-wrap: anywhere; }
+
+    .carriles { display: flex; justify-content: center; gap: 6px; min-height: 0; }
+    .carriles:empty { display: none; }
+    .carril { width: 44px; height: 54px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+      font-size: 24px; font-weight: 900; }
+    .carril.ok { background: var(--verde); color: #000; }
+    .carril.no { background: var(--panel2); border: 2px dashed #555; }
+    .carril-sep { width: 4px; background: var(--amarillo); border-radius: 2px; margin: 0 4px; }
+
+    .hud-alerta { display: none; font-size: 22px; font-weight: 900; padding: 14px; border-radius: 12px; text-align: center;
+      background: var(--amarillo); color: #000; }
+    .hud-alerta.visible { display: block; }
+    .hud-alerta.urgente { background: var(--rojo); color: #fff; animation: pulso 1.2s infinite; }
+    @keyframes pulso { 50% { transform: scale(1.015); } }
+    .hud-banner { display: none; font-size: 15px; font-weight: 700; padding: 10px; border-radius: 10px; text-align: center;
+      background: #3a2a00; color: var(--amarillo); border: 1px solid #6b5000; }
+    .hud-banner.visible { display: block; }
+
+    .mapa { flex: 1; min-height: 200px; border-radius: 12px; border: 2px solid var(--borde); background: #222; }
+    .mapa-editor { flex: none; height: 46vh; min-height: 260px; }
+    .leaflet-container { font: inherit; }
+    .pin-num { background: none; border: none; }
+    .pin-num span { display: flex; width: 26px; height: 26px; border-radius: 50%; align-items: center; justify-content: center;
+      background: var(--azul); color: #fff; font-weight: 800; font-size: 13px; border: 2px solid #fff; box-shadow: 0 1px 4px #000; }
+    .pin-num.actual span { background: var(--amarillo); color: #000; transform: scale(1.25); }
+    .pin-num.pasado span { background: #555; }
+    .pin-num.sel span { background: var(--verde); color: #000; transform: scale(1.25); }
+
+    .hud-bloqueo { display: none; text-align: center; font-size: 14px; color: var(--suave); padding: 10px; }
+    body.bloqueado .hud-controles { display: none; }
+    body.bloqueado .hud-bloqueo { display: block; }
+
+    /* ---------- Grabar ---------- */
+    .grab-stats { display: flex; gap: 10px; }
+    .grab-stats > div { flex: 1; background: var(--panel); border: 1px solid var(--borde); border-radius: 12px; padding: 10px; text-align: center; }
+    .grab-stats b { display: block; font-size: 26px; color: var(--verde); }
+    .grab-stats span { font-size: 13px; color: var(--suave); }
+
+    /* ---------- Editor ---------- */
+    .lista-puntos { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+    .lista-puntos li { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--borde);
+      border-radius: 10px; padding: 8px 10px; }
+    .lista-puntos .num { width: 26px; height: 26px; flex: 0 0 26px; border-radius: 50%; background: var(--azul); display: flex;
+      align-items: center; justify-content: center; font-weight: 800; font-size: 13px; }
+    .lista-puntos .nom { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .lista-puntos .acc { display: flex; gap: 4px; }
+    .lista-puntos .acc button { padding: 6px 9px; }
+    .preview { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+    .preview .hud-flecha { width: 56px; height: 56px; flex-basis: 56px; }
+    .preview .carril { width: 30px; height: 38px; font-size: 16px; }
+    #ed-form h3 { margin: 0 0 6px; }
+
+    .segmentado { display: flex; gap: 6px; }
+    .seg { flex: 1; min-width: 0; padding: 10px 6px; border-radius: 8px; border: 1px solid var(--borde); background: var(--panel2);
+      color: var(--texto); cursor: pointer; font-size: 14px; overflow-wrap: anywhere; }
+    .seg.activo { background: var(--verde); color: #000; border-color: var(--verde); font-weight: 700; }
+    .destinos-ed { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+    .destinos-ed .fila input { flex: 1; }
+    .trazados-ed { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--suave); }
+    .trazados-ed li { margin: 4px 0; }
+    .trazados-ed button { margin-left: 6px; padding: 3px 8px; font-size: 12px; }
+    .aplica { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+    .aplica label { display: flex; gap: 6px; align-items: center; font-size: 14px; }
+    .aplica input { width: auto; }
+    .variante { background: var(--panel2); border: 1px solid var(--borde); border-radius: 10px; padding: 8px 10px; margin-top: 8px; }
+    .variante summary { font-weight: 700; }
+    .variante input, .variante select, .variante textarea { background: var(--bg); }
+    .seccion { margin: 14px 0 0; font-size: 15px; color: var(--verde); }
+    [hidden] { display: none !important; }
+    .osm-lista { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+    .osm-lista label { display: flex; gap: 10px; align-items: flex-start; background: var(--panel2); border: 1px solid var(--borde);
+      border-radius: 10px; padding: 8px 10px; font-size: 14px; cursor: pointer; }
+    .osm-lista input { width: auto; margin-top: 3px; }
+    .osm-lista .sub { display: block; color: var(--suave); font-size: 12px; margin-top: 2px; }
+    .osm-lista .ya { opacity: .55; }
+    .rot-osm { background: var(--panel2); border: 1px solid var(--borde); border-radius: 10px; padding: 8px 10px; margin-top: 8px; }
+    .salidas-osm { margin: 4px 0 0; padding-left: 22px; font-size: 14px; }
+    .salidas-osm li { margin: 3px 0; }
+    .pin-salida { background: none; border: none; }
+    .pin-salida span { display: flex; width: 22px; height: 22px; border-radius: 50%; align-items: center; justify-content: center;
+      background: #ff8a00; color: #000; font-weight: 800; font-size: 12px; border: 2px solid #fff; box-shadow: 0 1px 4px #000; }
+    .pin-salida.entrada span { background: #fff; color: #000; }
+    .pin-osm span { display: block; width: 18px; height: 18px; border-radius: 50%; background: #ff8a00; border: 3px solid #fff; box-shadow: 0 1px 4px #000; }
+
+    .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); opacity: 0;
+      background: #000; color: #fff; border: 1px solid var(--borde); padding: 10px 16px; border-radius: 10px;
+      transition: .25s; pointer-events: none; z-index: 2000; max-width: calc(100% - 32px); text-align: center; }
+    .toast.visible { opacity: 1; transform: translateX(-50%); }
+  </style>
+</head>
+<body>
+
+  <!-- ================= INICIO ================= -->
+  <section id="pantalla-inicio" class="pantalla activa">
+    <header class="cabecera">
+      <h1>Copiloto de Ruta</h1>
+      <p class="sub">Avisos de voz y carriles para tramos difíciles</p>
+    </header>
+
+    <div class="tarjeta">
+      <label class="etq" for="sel-ruta">Ruta</label>
+      <select id="sel-ruta"></select>
+      <span class="etq">Sentido</span>
+      <div class="segmentado" role="group" aria-label="Sentido">
+        <button id="btn-ida" class="seg" data-sentido="ida">Ida</button>
+        <button id="btn-vuelta" class="seg" data-sentido="vuelta">Vuelta</button>
+      </div>
+      <label class="etq" for="sel-destino">Destino</label>
+      <select id="sel-destino"></select>
+      <p id="ruta-info" class="info"></p>
+    </div>
+
+    <button id="btn-conductor" class="btn btn-verde">🚗 Iniciar como conductor</button>
+
+    <div class="fila">
+      <button id="btn-simular" class="btn btn-azul">🤖 Simular</button>
+      <select id="sim-vel" aria-label="Velocidad simulada">
+        <option value="60">60 km/h</option>
+        <option value="80" selected>80 km/h</option>
+        <option value="100">100 km/h</option>
+      </select>
+      <select id="sim-factor" aria-label="Aceleración de la simulación">
+        <option value="1">×1</option>
+        <option value="5" selected>×5</option>
+        <option value="10">×10</option>
+      </select>
+    </div>
+
+    <button id="btn-grabar" class="btn btn-gris">🎙️ Grabar ruta (solo acompañante)</button>
+    <button id="btn-editor" class="btn btn-gris">✏️ Editar rutas y puntos</button>
+    <button id="btn-descargar" class="btn btn-gris">⬇️ Guardar mapa de esta ruta para usar sin señal</button>
+    <p id="descarga-estado" class="info"></p>
+
+    <details class="tarjeta">
+      <summary>🔊 Voz</summary>
+      <label class="etq" for="aj-voz">Voz</label>
+      <select id="aj-voz"><option value="">Automática (español)</option></select>
+      <label class="etq" for="aj-rate">Velocidad de habla: <span id="aj-rate-val"></span></label>
+      <input type="range" id="aj-rate" min="0.7" max="1.4" step="0.05">
+      <label class="etq" for="aj-vol">Volumen: <span id="aj-vol-val"></span></label>
+      <input type="range" id="aj-vol" min="0.2" max="1" step="0.05">
+      <div class="fila-wrap"><button id="aj-probar" class="btn-mini">Probar voz</button></div>
+    </details>
+
+    <p class="aviso-seguridad">Configura todo antes de salir. Con el carro en movimiento los controles se bloquean.
+      Los avisos son una ayuda: manda siempre lo que ves en la vía y la señalización.</p>
+  </section>
+
+  <!-- ================= HUD (conductor / simulador) ================= -->
+  <section id="pantalla-hud" class="pantalla hud">
+    <div class="hud-barra">
+      <span id="hud-progreso">—</span>
+      <span class="chips"><span id="hud-vel" class="chip">-- km/h</span><span id="hud-gps" class="chip">GPS</span></span>
+    </div>
+
+    <div id="hud-tarjeta" class="hud-tarjeta" role="button" tabindex="0" aria-label="Repetir último aviso">
+      <div id="hud-flecha" class="hud-flecha"></div>
+      <div class="hud-datos">
+        <div id="hud-dist" class="hud-dist">--</div>
+        <div id="hud-nombre" class="hud-nombre">Esperando GPS…</div>
+      </div>
+    </div>
+
+    <div id="hud-carriles" class="carriles"></div>
+    <div id="hud-alerta" class="hud-alerta"></div>
+    <div id="hud-banner" class="hud-banner"></div>
+
+    <div id="map-hud" class="mapa"></div>
+
+    <div class="hud-controles"><button id="btn-detener" class="btn btn-rojo">⏹ Detener</button></div>
+    <div class="hud-bloqueo">🔒 Controles bloqueados en movimiento · toca el aviso para repetirlo</div>
+  </section>
+
+  <!-- ================= GRABAR (acompañante) ================= -->
+  <section id="pantalla-grabar" class="pantalla hud">
+    <div class="hud-barra"><span id="grab-titulo">🎙️ Grabando ruta</span><span id="grab-gps" class="chip">GPS</span></div>
+    <div class="grab-stats">
+      <div><b id="grab-dist">0.0 km</b><span>recorrido</span></div>
+      <div><b id="grab-marcas">0</b><span>puntos marcados</span></div>
+    </div>
+    <div id="map-grabar" class="mapa"></div>
+    <button id="btn-marcar" class="btn btn-amarillo btn-grande">📍 Marcar aquí</button>
+    <button id="btn-terminar-grab" class="btn btn-gris">✅ Terminar y guardar</button>
+  </section>
+
+  <!-- ================= EDITOR ================= -->
+  <section id="pantalla-editor" class="pantalla">
+    <div class="hud-barra"><button id="ed-volver" class="btn-link">← Volver</button><span>Editor de rutas</span></div>
+
+    <div class="tarjeta">
+      <label class="etq" for="ed-sel-ruta">Ruta</label>
+      <div class="fila"><select id="ed-sel-ruta"></select><button id="ed-nueva" class="btn-mini">＋ Nueva</button></div>
+      <label class="etq" for="ed-nombre">Nombre de la ruta</label>
+      <input id="ed-nombre" autocomplete="off">
+      <label class="check"><input type="checkbox" id="ed-verificada"> Coordenadas y avisos verificados en la vía</label>
+      <div class="fila-wrap">
+        <button id="ed-exportar" class="btn-mini">Exportar JSON</button>
+        <label class="btn-mini">Importar JSON<input type="file" id="ed-importar" accept=".json,application/json" hidden></label>
+        <button id="ed-eliminar" class="btn-mini peligro">Eliminar ruta</button>
+      </div>
+    </div>
+
+    <div class="tarjeta">
+      <span class="etq">Sentido que estás editando</span>
+      <div class="segmentado" role="group" aria-label="Sentido a editar">
+        <button id="ed-ida" class="seg" data-sentido="ida">Ida</button>
+        <button id="ed-vuelta" class="seg" data-sentido="vuelta">Vuelta</button>
+      </div>
+      <label class="etq" for="ed-tramo-nombre">Nombre de este sentido</label>
+      <input id="ed-tramo-nombre" autocomplete="off" placeholder="Ej.: Interior → Ciudad">
+
+      <h3 class="seccion">Destinos</h3>
+      <p class="info">Cada destino puede tener su propia instrucción en divisiones y rotondas.</p>
+      <div id="ed-destinos" class="destinos-ed"></div>
+      <div class="fila-wrap"><button id="ed-destino-nuevo" class="btn-mini">＋ Agregar destino</button></div>
+
+      <h3 class="seccion">Trazados grabados</h3>
+      <ul id="ed-trazados" class="trazados-ed"></ul>
+      <div class="fila-wrap">
+        <button id="ed-ordenar" class="btn-mini">Ordenar puntos por trazado</button>
+        <button id="ed-crear-vuelta" class="btn-mini">Crear vuelta a partir de la ida</button>
+      </div>
+
+      <h3 class="seccion">Rotondas reales</h3>
+      <div class="fila-wrap" style="margin-top:4px"><button id="ed-osm" class="btn-mini primario">🌐 Buscar rotondas reales (OpenStreetMap)</button></div>
+    </div>
+
+    <div id="osm-panel" class="tarjeta" hidden>
+      <h3 class="seccion" style="margin-top:0">🌐 Rotondas reales de OpenStreetMap</h3>
+      <label class="etq" for="osm-zona">Buscar en</label>
+      <select id="osm-zona">
+        <option value="ruta">A lo largo de este sentido de la ruta</option>
+        <option value="mapa">El área visible del mapa (acerca el mapa a la zona)</option>
+      </select>
+      <div class="fila-wrap">
+        <button id="osm-buscar" class="btn-mini primario">Buscar</button>
+        <button id="osm-cerrar" class="btn-mini">Cerrar</button>
+      </div>
+      <p id="osm-estado" class="info"></p>
+      <div id="osm-resultados" class="osm-lista"></div>
+      <div id="osm-acciones" class="fila-wrap" hidden>
+        <button id="osm-todas" class="btn-mini">Marcar todas</button>
+        <button id="osm-agregar" class="btn-mini primario">Agregar seleccionadas a este sentido</button>
+      </div>
+      <p class="info">Datos © colaboradores de OpenStreetMap (ODbL). Los mapean voluntarios: puede faltar alguna rotonda o salida. Verifica en la vía.</p>
+    </div>
+
+    <p class="info">Arrastra los marcadores para corregir su posición. Con un punto abierto, toca el mapa para moverlo ahí.</p>
+    <div id="map-editor" class="mapa mapa-editor"></div>
+
+    <form id="ed-form" class="tarjeta" hidden>
+      <h3 id="ed-form-titulo">Punto</h3>
+      <label class="etq" for="f-nombre">Nombre</label>
+      <input id="f-nombre" required autocomplete="off">
+      <div class="fila">
+        <div class="col"><label class="etq" for="f-lat">Latitud</label><input id="f-lat" inputmode="decimal" autocomplete="off"></div>
+        <div class="col"><label class="etq" for="f-lon">Longitud</label><input id="f-lon" inputmode="decimal" autocomplete="off"></div>
+      </div>
+      <div class="fila-wrap"><button type="button" id="f-ubicacion" class="btn-mini">📍 Usar mi ubicación actual</button></div>
+
+      <label class="etq" for="f-tipo">Tipo de punto</label>
+      <select id="f-tipo">
+        <option value="normal">Aviso (curva, carril, salida…)</option>
+        <option value="division">División de la vía</option>
+        <option value="rotonda">Rotonda</option>
+      </select>
+
+      <div id="f-aplica-box">
+        <span class="etq">Aplica a (ninguno marcado = todos los destinos)</span>
+        <div id="f-aplica" class="aplica"></div>
+      </div>
+
+      <h3 class="seccion">Instrucción general</h3>
+      <p class="info" id="f-general-ayuda">Se usa cuando no se eligió destino o el destino no tiene instrucción propia.</p>
+      <div data-no="rotonda">
+        <label class="etq" for="f-flecha">Flecha</label>
+        <select id="f-flecha"></select>
+      </div>
+      <div data-solo="rotonda">
+        <div id="f-rot-osm" class="rot-osm" hidden>
+          <label class="etq" for="f-entrada-osm">¿Por qué calle entras a la rotonda en este sentido?</label>
+          <select id="f-entrada-osm"></select>
+          <p class="info">Salidas en el orden en que se recorre la rotonda (también numeradas en el mapa; <b>E</b> = entrada):</p>
+          <ol id="f-salidas-osm" class="salidas-osm"></ol>
+        </div>
+      </div>
+      <div class="fila" data-solo="rotonda">
+        <div class="col"><label class="etq" for="f-salidas">Salidas de la rotonda</label><input id="f-salidas" type="number" min="2" max="8" inputmode="numeric"></div>
+        <div class="col"><label class="etq" for="f-salida">Salida a tomar</label><input id="f-salida" type="number" min="1" max="8" inputmode="numeric" placeholder="—"></div>
+      </div>
+      <label class="etq" for="f-carriles">Carriles, de izquierda a derecha (O = usar, - = evitar, | = separación). Vacío = no mostrar</label>
+      <input id="f-carriles" placeholder="-OO-" autocomplete="off" autocapitalize="characters">
+      <div id="f-preview" class="preview"></div>
+      <label class="etq" for="f-carril-texto">Texto grande en pantalla</label>
+      <input id="f-carril-texto" autocomplete="off">
+      <label class="etq" for="f-larga">Aviso de voz a ~1 km</label>
+      <textarea id="f-larga" rows="2"></textarea>
+      <label class="etq" for="f-corta">Aviso de voz a ~250 m</label>
+      <textarea id="f-corta" rows="2"></textarea>
+      <div data-solo="rotonda">
+        <label class="etq" for="f-entrada">Aviso de voz al entrar a la rotonda (~40 m)</label>
+        <textarea id="f-entrada" rows="2"></textarea>
+      </div>
+      <p class="info" data-solo="rotonda">En rotondas, si dejas los avisos vacíos se generan solos a partir del número de salida.</p>
+
+      <div id="f-variantes-box">
+        <h3 class="seccion">Instrucción por destino</h3>
+        <p class="info">Deja vacío un campo para usar el de la instrucción general.</p>
+        <div id="f-variantes"></div>
+      </div>
+
+      <div class="fila-wrap">
+        <button type="submit" class="btn-mini primario">Guardar punto</button>
+        <button type="button" id="f-escuchar" class="btn-mini">🔊 Escuchar avisos</button>
+        <button type="button" id="f-cerrar" class="btn-mini">Cerrar</button>
+      </div>
+    </form>
+
+    <button id="ed-agregar" class="btn btn-gris">＋ Agregar punto en el centro del mapa</button>
+    <ol id="ed-lista" class="lista-puntos"></ol>
+  </section>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="lib/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
