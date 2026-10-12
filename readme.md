@@ -11,7 +11,7 @@ un diagrama de carriles y un texto grande.
 ```
 index.html        Interfaz: inicio, HUD, grabación y editor
 app.js            Motor: rutas, GPS, avisos, simulador, editor, rotondas OSM
-sw.js             Service Worker (v24): app sin conexión + caché del mapa ya visto
+sw.js             Service Worker (v25): app sin conexión + caché del mapa ya visto
 manifest.json     Instalación PWA
 icons/            íconos normales, maskable (Android), apple-touch y favicon
 lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
@@ -68,6 +68,10 @@ deduce por qué calle se entra y por cuál se sale (si difiere del número que d
 - Rotondas atravesadas por una avenida (intercambiadores como el de Chitré): la avenida que cruza por el centro no
   cuenta como salida, aunque en OSM esté marcada como parte de la rotonda; los arcos del anillo cortados por el cruce
   se unen y, si hace falta, el anillo se reconstruye por ángulo alrededor del centro.
+- **Letreros oficiales** (`LETREROS_ROTONDAS` en app.js): para rotondas verificadas, cada salida lleva el destino del
+  letrero ("tercera salida hacia Chitré, por Avenida Carmelo Spadafora"). Incluido: Intercambiador de Chitré, según la
+  infografía de la ATTT (Carmelo Spadafora → Chitré, Ramírez de Diego → Terminal, Belisario Porras → La Villa de Los
+  Santos, Arnulfo Escalona → Universidad). Se reconoce por el id del anillo en OSM o por su ubicación.
 - La forma de las rotondas se pide primero al servidor propio de la app (`api/overpass.js`, función de Vercel en el mismo
   dominio): evita que el navegador bloquee las respuestas de error de Overpass, reintenta con 4 servidores públicos (sin caché compartida). Si esa función no existe (copia local), se consulta directo a los
   4 servidores públicos de Overpass (si uno está saturado, se prueba el siguiente).

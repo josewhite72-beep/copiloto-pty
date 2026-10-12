@@ -266,6 +266,25 @@ function puntoNuevo(lat, lon, nombre) {
 /* Instrucción efectiva de un punto según el destino                   */
 /* ------------------------------------------------------------------ */
 
+// Letreros oficiales de rotondas verificadas: hacia dónde lleva cada salida (por nombre de la calle de salida).
+// Intercambiador de Chitré: infografía de la ATTT (entrando desde Arnulfo Escalona: 1.ª Chitré, 2.ª Terminal,
+// 3.ª La Villa de Los Santos, 4.ª Universidad), orientada con OpenStreetMap (norte = Chitré, sur = vía 2 a La Villa).
+const LETREROS_ROTONDAS = [
+  { nombre: 'Intercambiador de Chitré', osm: '1392409934', lat: 7.9524132, lon: -80.4256241, fuente: 'ATTT',
+    salidas: [['spadafora', 'Chitré'], ['ramirez de diego', 'Terminal'], ['belisario porras', 'La Villa de Los Santos'],
+              ['arnulfo escalona', 'Universidad']] }
+];
+const sinTildes = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+function letreroDeSalida(rotGeo, calle) {
+  if (!rotGeo || !calle) return '';
+  const r = LETREROS_ROTONDAS.find(x => (rotGeo.osm && String(rotGeo.osm) === x.osm) ||
+    (rotGeo.lat != null && distancia({ lat: rotGeo.lat, lon: rotGeo.lon }, x) < 60));
+  if (!r) return '';
+  const c = sinTildes(calle);
+  const s = r.salidas.find(([clave]) => c.includes(clave));
+  return s ? s[1] : '';
+}
+
 function resolverPunto(p, destId, destinos) {
   const v = (destId && p.variantes[destId]) || {};
   const pick = (k, base) => (v[k] != null && v[k] !== '') ? v[k] : base;
@@ -292,10 +311,15 @@ function resolverPunto(p, destId, destinos) {
         ? salidasReales[r.salida - 1].nombre : (p.calle || '');
       const por = calle ? `, por ${calle}` : '';
       r.calleSalida = calle;
-      if (!r.larga) r.larga = `En {dist}, ${p.nombre.toLowerCase().startsWith('rotonda') ? 'rotonda' : p.nombre}. Tome la ${ord} salida${hacia}${por}.`;
-      if (!r.corta) r.corta = `En la rotonda, tome la ${ord} salida${hacia}${por}.`;
-      if (!r.entrada) r.entrada = `${cap(ord)} salida${hacia}${por}.`;
-      if (!r.carrilTexto) r.carrilTexto = `ROTONDA: ${ord.toUpperCase()} SALIDA` + (calle ? ` · ${calle.toUpperCase()}` : '');
+      // Letrero oficial de esa salida (si la rotonda está en el catálogo): "hacia Chitré"
+      const letrero = letreroDeSalida(p.rotGeo, calle);
+      r.letrero = letrero;
+      const h = hacia || (letrero ? ` hacia ${letrero}` : '');
+      if (!r.larga) r.larga = `En {dist}, ${p.nombre.toLowerCase().startsWith('rotonda') ? 'rotonda' : p.nombre}. Tome la ${ord} salida${h}${por}.`;
+      if (!r.corta) r.corta = `En la rotonda, tome la ${ord} salida${h}${por}.`;
+      if (!r.entrada) r.entrada = `${cap(ord)} salida${h}${por}.`;
+      if (!r.carrilTexto) r.carrilTexto = `ROTONDA: ${ord.toUpperCase()} SALIDA` +
+        (letrero && !hacia ? ` · HACIA ${letrero.toUpperCase()}` : calle ? ` · ${calle.toUpperCase()}` : '');
     } else {
       if (!r.larga) r.larga = `En {dist}, ${p.nombre}.`;
       if (!r.corta) r.corta = `Rotonda. Busque la salida${hacia}.`;
@@ -996,7 +1020,7 @@ function procesarFix(f, opc = {}) {
   $('hud-carriles').innerHTML = cerca && !compacta ? htmlCarriles(p.carriles) : '';
   const alerta = $('hud-alerta');
   alerta.textContent = compacta && p.tipo === 'rotonda' && p.salida
-    ? `${p.salida}.ª SALIDA${p.calleSalida ? ' · ' + p.calleSalida.toUpperCase() : ''}`
+    ? `${p.salida}.ª SALIDA${p.letrero ? ' · ' + p.letrero.toUpperCase() : p.calleSalida ? ' · ' + p.calleSalida.toUpperCase() : ''}`
     : p.carrilTexto;
   alerta.className = 'hud-alerta' + (cerca && p.carrilTexto ? ' visible' : '') + (dist <= CFG.avisoCorto ? ' urgente' : '') + (compacta ? ' compacta' : '');
   const banner = $('hud-banner');
@@ -2708,7 +2732,7 @@ function renderPrevia() {
     const b = document.createElement('b'); b.textContent = `${i + 1}. ${p.nombre}${(t.puntos.find(x => x.id === p.id) || {}).fuente === 'propio' ? ' ⭐' : ''}`;
     const sub = document.createElement('span');
     sub.textContent = km + (p.tipo === 'rotonda'
-      ? (p.salida ? `${cap(ORD[p.salida])} salida${p.calleSalida ? ', por ' + p.calleSalida : ''}` : 'Salida sin definir')
+      ? (p.salida ? `${cap(ORD[p.salida])} salida${p.letrero ? ' hacia ' + p.letrero : ''}${p.calleSalida ? ', por ' + p.calleSalida : ''}` : 'Salida sin definir')
       : (p.carrilTexto || p.corta));
     tx.append(b, sub);
     li.append(ic, tx);
