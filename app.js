@@ -1726,7 +1726,7 @@ function nombreVia(tags) {
 
 async function consultarOverpass(bbox) {
   return consultarOverpassQ(`[out:json][timeout:40];way["junction"~"^(roundabout|circular)$"]["highway"](${bbox.map(n => n.toFixed(5)).join(',')})->.r;` +
-            'node(w.r)->.n;way(bn.n)["highway"]->.c;(.r;.c;);out geom tags;');
+            'node(w.r)->.n;way(bn.n)["highway"]->.c;(.r;.c;);out geom;');
 }
 
 async function consultarOverpassQ(q, msMax = 45000) {
@@ -2446,7 +2446,7 @@ async function enriquecerRotondas(tramo) {
   const partes = faltan.map(p => `way["junction"~"^(roundabout|circular)$"]["highway"](around:250,${p.lat.toFixed(6)},${p.lon.toFixed(6)});`).join('');
   // En OSM una rotonda suele venir partida en muchos tramos: se buscan en 250 m alrededor de la entrada
   // para traer el anillo completo aunque la rotonda sea grande (solo se usan anillos cerrados).
-  const q = `[out:json][timeout:25];(${partes})->.r;node(w.r)->.n;way(bn.n)["highway"]->.c;(.r;.c;);out geom tags;`;
+  const q = `[out:json][timeout:25];(${partes})->.r;node(w.r)->.n;way(bn.n)["highway"]->.c;(.r;.c;);out geom;`;
   let lista;
   try { lista = analizarRotondas(await consultarOverpassQ(q, 20000)); }
   catch (e) { faltan.forEach(p => { p.rotDiag = 'sin respuesta de OpenStreetMap: ' + e.message; }); return; }
