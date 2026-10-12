@@ -1693,7 +1693,9 @@ function renderRotOSM() {
 /* Rotondas reales: OpenStreetMap (consulta Overpass desde el teléfono) */
 /* ------------------------------------------------------------------ */
 
-const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+// Servidores públicos de Overpass: si uno está saturado o caído se prueba el siguiente
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter',
+                  'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
 const VIAS_VEHICULO = /^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|road|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$/;
 const osm = { resultados: [], capa: null };
 
@@ -1728,18 +1730,33 @@ async function consultarOverpass(bbox) {
 }
 
 async function consultarOverpassQ(q, msMax = 45000) {
-  let ultimo;
+  const fallos = [];
   for (const url of OVERPASS) {
+    const ctrl = new AbortController(), to = setTimeout(() => ctrl.abort(), msMax);
     try {
-      const ctrl = new AbortController(), to = setTimeout(() => ctrl.abort(), msMax);
       const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q),
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: ctrl.signal });
-      clearTimeout(to);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      return await res.json();
-    } catch (e) { ultimo = e; }
+      if (!res.ok) throw new Error(res.status === 429 ? 'servidor ocupado' : res.status >= 500 ? 'servidor saturado' : 'HTTP ' + res.status);
+      const data = await res.json();
+      if (data && data.remark && /runtime error|timed out/i.test(data.remark) && !(data.elements || []).length) throw new Error('consulta demasiado lenta');
+      return data;
+    } catch (e) {
+      fallos.push(e.name === 'AbortError' ? 'tiempo agotado' : /Failed to fetch|NetworkError|Load failed/i.test(e.message) ? 'sin conexión' : e.message);
+    } finally { clearTimeout(to); }
   }
-  throw ultimo || new Error('sin respuesta');
+  // Mensaje corto con la causa más repetida
+  const causa = fallos.sort((a, b) => fallos.filter(x => x === b).length - fallos.filter(x => x === a).length)[0];
+  throw new Error(causa || 'sin respuesta');
+}
+
+// Rotondas ya analizadas: se guardan en el teléfono para no volver a consultar (y para funcionar sin señal)
+const LS_ROTCACHE = 'copiloto.rotondas.v1';
+function rotondasGuardadas() { return leerLS(LS_ROTCACHE, []).filter(x => x && x.centro && Date.now() - (x.t || 0) < 60 * 864e5); }
+function guardarRotondas(nuevas) {
+  if (!nuevas.length) return;
+  const lista = rotondasGuardadas().filter(x => !nuevas.some(n => distancia(n.centro, x.centro) < 15));
+  nuevas.forEach(n => lista.push({ ...n, t: Date.now() }));
+  try { localStorage.setItem(LS_ROTCACHE, JSON.stringify(lista.slice(-150))); } catch (e) { /* sin espacio: no pasa nada */ }
 }
 
 // Convierte la respuesta de Overpass en rotondas con sus conexiones ordenadas en sentido de circulación
@@ -2401,36 +2418,48 @@ async function enriquecerRotondas(tramo) {
   const rots = tramo.puntos.filter(p => p.tipo === 'rotonda' && !p.rotGeo).slice(0, 25);
   const traz = tramo.trazados['*'];
   if (!rots.length || !traz) return;
-  const partes = rots.map(p => `way["junction"~"^(roundabout|circular)$"]["highway"](around:250,${p.lat.toFixed(6)},${p.lon.toFixed(6)});`).join('');
+  const geo = prepararGeometria(traz, []);
+  // 1) Rotondas que ya se analizaron antes en este teléfono
+  const guardadas = rotondasGuardadas();
+  const faltan = rots.filter(p => !aplicarRotonda(p, guardadas, geo, true));
+  if (!faltan.length) return;
+  // 2) El resto se consulta a OpenStreetMap
+  const partes = faltan.map(p => `way["junction"~"^(roundabout|circular)$"]["highway"](around:250,${p.lat.toFixed(6)},${p.lon.toFixed(6)});`).join('');
   // En OSM una rotonda suele venir partida en muchos tramos: se buscan en 250 m alrededor de la entrada
   // para traer el anillo completo aunque la rotonda sea grande (solo se usan anillos cerrados).
   const q = `[out:json][timeout:25];(${partes})->.r;node(w.r)->.n;way(bn.n)["highway"]->.c;(.r;.c;);out geom tags;`;
   let lista;
   try { lista = analizarRotondas(await consultarOverpassQ(q, 20000)); }
-  catch (e) { rots.forEach(p => { p.rotDiag = 'sin respuesta de OpenStreetMap'; }); return; }
-  const geo = prepararGeometria(traz, []);
-  rots.forEach(p => {
-    const cerca = lista.filter(x => distancia(x.centro, p) < x.radio + 70).sort((a, b) => distancia(a.centro, p) - distancia(b.centro, p));
-    if (!cerca.length) { p.rotDiag = 'no hay rotonda mapeada en ese punto'; return; }
-    const r = cerca.find(x => x.cerrado);
-    if (!r) { p.rotDiag = 'el anillo está incompleto o con ramales en el mapa'; return; }
-    const cruce = cruceDeRotonda(geo, r, proyectar(geo, p).s);
-    if (!cruce) { p.rotDiag = 'el camino no coincide con el anillo mapeado'; return; }
-    const g = normalizarRotGeo({ osm: r.osm, L: r.L, radio: r.radio, conexiones: r.conexiones, lat: r.centro.lat, lon: r.centro.lon,
-                                 entrada: adivinarEntrada({ conexiones: r.conexiones }, r.centro, cruce.antes) });
-    if (!g || g.entrada == null) { p.rotDiag = 'no se identificó la calle de entrada'; return; }
-    // La salida que toma la ruta: la calle de salida con el rumbo más parecido al del camino al salir
-    const bs = rumbo(r.centro, cruce.despues);
-    const cand = g.conexiones.map((c, i) => ({ c, i })).filter(o => o.c.salida);
-    if (!cand.length) return;
-    const tomada = cand.reduce((m, o) => difAng(o.c.rumbo, bs) < difAng(m.c.rumbo, bs) ? o : m);
-    const k = salidasDe(g).findIndex(c => c.i === tomada.i) + 1;
-    if (k < 1) { p.rotDiag = 'no se identificó la salida'; return; }
-    p.rotDiag = '';
-    p.rotGeo = g;
-    p.salida = k;
-    if (!p.calle || /sin nombre/i.test(p.calle)) p.calle = tomada.c.nombre;
-  });
+  catch (e) { faltan.forEach(p => { p.rotDiag = 'sin respuesta de OpenStreetMap: ' + e.message; }); return; }
+  guardarRotondas(lista.filter(x => x.cerrado));
+  faltan.forEach(p => aplicarRotonda(p, lista, geo, false));
+}
+
+// Busca en la lista la rotonda de ese punto y, si el camino la cruza, fija su forma real y la salida.
+// soloSiCoincide: no deja diagnóstico (se usa con las guardadas; si no sirve, se consulta a OSM).
+function aplicarRotonda(p, lista, geo, soloSiCoincide) {
+  const fallo = (m) => { if (!soloSiCoincide) p.rotDiag = m; return false; };
+  const cerca = lista.filter(x => distancia(x.centro, p) < x.radio + 70).sort((a, b) => distancia(a.centro, p) - distancia(b.centro, p));
+  if (!cerca.length) return fallo('no hay rotonda mapeada en ese punto');
+  const r = cerca.find(x => x.cerrado);
+  if (!r) return fallo('el anillo está incompleto o con ramales en el mapa');
+  const cruce = cruceDeRotonda(geo, r, proyectar(geo, p).s);
+  if (!cruce) return fallo('el camino no coincide con el anillo mapeado');
+  const g = normalizarRotGeo({ osm: r.osm, L: r.L, radio: r.radio, conexiones: r.conexiones, lat: r.centro.lat, lon: r.centro.lon,
+                               entrada: adivinarEntrada({ conexiones: r.conexiones }, r.centro, cruce.antes) });
+  if (!g || g.entrada == null) return fallo('no se identificó la calle de entrada');
+  // La salida que toma la ruta: la calle de salida con el rumbo más parecido al del camino al salir
+  const bs = rumbo(r.centro, cruce.despues);
+  const cand = g.conexiones.map((c, i) => ({ c, i })).filter(o => o.c.salida);
+  if (!cand.length) return fallo('la rotonda no tiene salidas en el mapa');
+  const tomada = cand.reduce((m, o) => difAng(o.c.rumbo, bs) < difAng(m.c.rumbo, bs) ? o : m);
+  const k = salidasDe(g).findIndex(c => c.i === tomada.i) + 1;
+  if (k < 1) return fallo('no se identificó la salida');
+  p.rotDiag = '';
+  p.rotGeo = g;
+  p.salida = k;
+  if (!p.calle || /sin nombre/i.test(p.calle)) p.calle = tomada.c.nombre;
+  return true;
 }
 
 // Puntos del camino justo antes de entrar al anillo y justo después de salir
@@ -2637,6 +2666,18 @@ function renderPrevia() {
   } else if (!r.verificada) alertas.push('Ruta sin verificar: revisa los puntos en la vía antes de confiar en ella.');
   const ca = $('previa-alertas'); ca.innerHTML = '';
   alertas.forEach(a => { const d = document.createElement('div'); d.className = 'previa-alerta'; d.textContent = '⚠ ' + a; ca.appendChild(d); });
+  if (ctx.tipo === 'viaje' && t.puntos.some(p => p.tipo === 'rotonda' && !p.rotGeo && /sin respuesta|error/.test(p.rotDiag))) {
+    const b = document.createElement('button'); b.className = 'btn-mini'; b.id = 'btn-reintentar-rot'; b.type = 'button'; b.style.marginTop = '8px';
+    b.textContent = '↻ Reintentar forma real de las rotondas';
+    b.addEventListener('click', async () => {
+      b.disabled = true; b.textContent = 'Consultando OpenStreetMap…';
+      try { await enriquecerRotondas(t); } catch (e) { /* el diagnóstico queda en cada rotonda */ }
+      guardarViaje(); renderPrevia();
+      const ok = t.puntos.filter(p => p.tipo === 'rotonda' && p.rotGeo).length;
+      toast(ok ? 'Forma real obtenida ✓' : 'OpenStreetMap sigue sin responder. Prueba en unos minutos.');
+    });
+    ca.appendChild(b);
+  }
 
   // Lista de maniobras
   const ol = $('previa-lista'); ol.innerHTML = '';

@@ -11,7 +11,7 @@ un diagrama de carriles y un texto grande.
 ```
 index.html        Interfaz: inicio, HUD, grabación y editor
 app.js            Motor: rutas, GPS, avisos, simulador, editor, rotondas OSM
-sw.js             Service Worker (v21): app sin conexión + caché del mapa ya visto
+sw.js             Service Worker (v22): app sin conexión + caché del mapa ya visto
 manifest.json     Instalación PWA
 icons/            íconos normales, maskable (Android), apple-touch y favicon
 lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
@@ -66,6 +66,10 @@ deduce por qué calle se entra y por cuál se sale (si difiere del número que d
 - Rotondas atravesadas por una avenida (intercambiadores como el de Chitré): la avenida que cruza por el centro no
   cuenta como salida, aunque en OSM esté marcada como parte de la rotonda; los arcos del anillo cortados por el cruce
   se unen y, si hace falta, el anillo se reconstruye por ángulo alrededor del centro.
+- La forma de las rotondas se pide a 4 servidores públicos de Overpass (si uno está saturado, se prueba el siguiente).
+  Si ninguno responde, la vista previa dice la causa (servidor saturado, tiempo agotado, sin conexión) y muestra
+  "↻ Reintentar forma real de las rotondas". Cada rotonda obtenida se guarda en el teléfono 60 días: las siguientes
+  rutas que pasen por ella no dependen de OpenStreetMap y funcionan sin señal.
 
 ## Conceptos
 
