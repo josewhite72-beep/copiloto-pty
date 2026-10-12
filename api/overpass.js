@@ -1,6 +1,6 @@
 // Intermediario para Overpass (OpenStreetMap): la app consulta a su propio dominio y este servidor
 // pregunta a los servidores públicos de Overpass. Evita los bloqueos del navegador cuando Overpass
-// responde con error, reintenta con otros servidores y guarda la respuesta en la caché de Vercel.
+// responde con error, reintenta con otros servidores y no guarda caché compartida (la app guarda las rotondas en el teléfono).
 
 const SERVIDORES = [
   'https://overpass-api.de/api/interpreter',
@@ -35,8 +35,8 @@ module.exports = async (req, res) => {
       const texto = await r.text();
       const data = JSON.parse(texto);
       if (data.remark && /runtime error|timed out/i.test(data.remark) && !(data.elements || []).length) throw new Error('consulta demasiado lenta');
-      // Las rotondas casi no cambian: 7 días en la caché de Vercel
-      res.setHeader('Cache-Control', 'public, max-age=3600, s-maxage=604800, stale-while-revalidate=86400');
+      // Sin caché compartida: cada consulta es distinta (la app guarda las rotondas en el teléfono)
+      res.setHeader('Cache-Control', 'no-store');
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.status(200).send(texto);
       return;

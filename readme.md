@@ -69,8 +69,7 @@ deduce por qué calle se entra y por cuál se sale (si difiere del número que d
   cuenta como salida, aunque en OSM esté marcada como parte de la rotonda; los arcos del anillo cortados por el cruce
   se unen y, si hace falta, el anillo se reconstruye por ángulo alrededor del centro.
 - La forma de las rotondas se pide primero al servidor propio de la app (`api/overpass.js`, función de Vercel en el mismo
-  dominio): evita que el navegador bloquee las respuestas de error de Overpass, reintenta con 4 servidores públicos y
-  guarda cada respuesta 7 días en la caché de Vercel. Si esa función no existe (copia local), se consulta directo a los
+  dominio): evita que el navegador bloquee las respuestas de error de Overpass, reintenta con 4 servidores públicos (sin caché compartida). Si esa función no existe (copia local), se consulta directo a los
   4 servidores públicos de Overpass (si uno está saturado, se prueba el siguiente).
   Si ninguno responde, la vista previa dice la causa (servidor saturado, tiempo agotado, sin conexión) y muestra
   "↻ Reintentar forma real de las rotondas". Cada rotonda obtenida se guarda en el teléfono 60 días: las siguientes
