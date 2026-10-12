@@ -2,7 +2,7 @@
 // App: red primero (con límite de 3 s) para recibir actualizaciones; si no hay señal, usa la caché.
 // Mapa (OpenStreetMap): se reusa lo ya visto; no se descargan zonas completas.
 
-const APP_CACHE = 'copiloto-app-v22';
+const APP_CACHE = 'copiloto-app-v23';
 const TILE_CACHE = 'copiloto-osm-v1';
 const TILE_MAX_DIAS = 7; // las reglas de OpenStreetMap piden reusar lo ya visto al menos 7 días
 
@@ -72,6 +72,7 @@ self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+  if (url.pathname.includes('/api/')) return;   // consultas al servidor (Overpass): siempre directo
   if (url.hostname === 'tile.openstreetmap.org') {
     e.respondWith(tileCacheFirst(req));
   } else if (url.origin === self.location.origin) {

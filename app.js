@@ -1731,6 +1731,25 @@ async function consultarOverpass(bbox) {
 
 async function consultarOverpassQ(q, msMax = 45000) {
   const fallos = [];
+  // 1) Por el servidor propio de la app (mismo dominio: sin bloqueos del navegador, con reintentos y caché)
+  {
+    const ctrl = new AbortController(), to = setTimeout(() => ctrl.abort(), Math.max(msMax, 45000));
+    try {
+      const res = await fetch('./api/overpass?data=' + encodeURIComponent(q), { signal: ctrl.signal });
+      const tipo = res.headers.get('content-type') || '';
+      if (res.ok && tipo.includes('json')) return await res.json();
+      if (tipo.includes('json')) {                 // el servidor propio probó todo y explica la causa
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'HTTP ' + res.status);
+      }
+      // 404 u otra cosa: no hay servidor propio (p. ej. copia local) → se consulta directo
+    } catch (e) {
+      if (e.name === 'AbortError') throw new Error('tiempo agotado');
+      if (!/Failed to fetch|NetworkError|Load failed/i.test(e.message)) throw e;
+      fallos.push('sin conexión');
+    } finally { clearTimeout(to); }
+  }
+  // 2) Directo a los servidores públicos
   for (const url of OVERPASS) {
     const ctrl = new AbortController(), to = setTimeout(() => ctrl.abort(), msMax);
     try {

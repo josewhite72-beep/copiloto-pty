@@ -11,10 +11,12 @@ un diagrama de carriles y un texto grande.
 ```
 index.html        Interfaz: inicio, HUD, grabación y editor
 app.js            Motor: rutas, GPS, avisos, simulador, editor, rotondas OSM
-sw.js             Service Worker (v22): app sin conexión + caché del mapa ya visto
+sw.js             Service Worker (v23): app sin conexión + caché del mapa ya visto
 manifest.json     Instalación PWA
 icons/            íconos normales, maskable (Android), apple-touch y favicon
 lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
+api/overpass.js   Función de Vercel: intermediario para consultar rotondas en OpenStreetMap
+vercel.json       Encabezados y duración máxima de la función
 ```
 
 **Importante al actualizar:** borra el archivo viejo `sw..js` (con dos puntos). El correcto es `sw.js`.
@@ -66,7 +68,10 @@ deduce por qué calle se entra y por cuál se sale (si difiere del número que d
 - Rotondas atravesadas por una avenida (intercambiadores como el de Chitré): la avenida que cruza por el centro no
   cuenta como salida, aunque en OSM esté marcada como parte de la rotonda; los arcos del anillo cortados por el cruce
   se unen y, si hace falta, el anillo se reconstruye por ángulo alrededor del centro.
-- La forma de las rotondas se pide a 4 servidores públicos de Overpass (si uno está saturado, se prueba el siguiente).
+- La forma de las rotondas se pide primero al servidor propio de la app (`api/overpass.js`, función de Vercel en el mismo
+  dominio): evita que el navegador bloquee las respuestas de error de Overpass, reintenta con 4 servidores públicos y
+  guarda cada respuesta 7 días en la caché de Vercel. Si esa función no existe (copia local), se consulta directo a los
+  4 servidores públicos de Overpass (si uno está saturado, se prueba el siguiente).
   Si ninguno responde, la vista previa dice la causa (servidor saturado, tiempo agotado, sin conexión) y muestra
   "↻ Reintentar forma real de las rotondas". Cada rotonda obtenida se guarda en el teléfono 60 días: las siguientes
   rutas que pasen por ella no dependen de OpenStreetMap y funcionan sin señal.
