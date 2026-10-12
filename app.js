@@ -1762,9 +1762,35 @@ function analizarRotondas(data) {
   }));
   const grupos = new Map();
   anillos.forEach(w => { const g = raiz(w.id); if (!grupos.has(g)) grupos.set(g, []); grupos.get(g).push(w); });
+  // Si una avenida atraviesa la rotonda por el centro, el anillo puede venir en arcos separados: se unen los arcos vecinos
+  const lista = [...grupos.values()].map(ws => {
+    const ids = [...new Set(ws.flatMap(w => w.nodes))].map(id => coord.get(id)).filter(Boolean);
+    const c = { lat: ids.reduce((a, p) => a + p.lat, 0) / ids.length, lon: ids.reduce((a, p) => a + p.lon, 0) / ids.length };
+    return { ws, c, r: Math.max(...ids.map(p => distancia(c, p))) };
+  });
+  for (let i = 0; i < lista.length; i++) for (let j = i + 1; j < lista.length; j++) {
+    const a = lista[i], b = lista[j];
+    if (a.ws.length && b.ws.length && a.r < 150 && b.r < 150 && distancia(a.c, b.c) < Math.min(a.r, b.r) * 1.6 + 10) {
+      a.ws.push(...b.ws); b.ws = [];
+    }
+  }
+  grupos.clear();
+  lista.filter(x => x.ws.length).forEach((x, i) => grupos.set(i, x.ws));
 
   const res = [];
-  grupos.forEach(ws => {
+  grupos.forEach(ws0 => {
+    // Un tramo marcado como rotonda que pasa por el centro es la avenida que la atraviesa, no parte del anillo
+    let ws = ws0;
+    if (ws0.length > 1) {
+      const ps = [...new Set(ws0.flatMap(w => w.nodes))].map(id => coord.get(id)).filter(Boolean);
+      const c = { lat: ps.reduce((a, p) => a + p.lat, 0) / ps.length, lon: ps.reduce((a, p) => a + p.lon, 0) / ps.length };
+      const rm = ps.reduce((a, p) => a + distancia(c, p), 0) / ps.length;
+      const cruza = w => w.nodes.slice(1, -1).some(id => { const p = coord.get(id); return p && distancia(c, p) < rm * 0.4; }) ||
+        (w.nodes.length === 2 && (() => { const a = coord.get(w.nodes[0]), b = coord.get(w.nodes[1]);
+          return a && b && distancia(c, { lat: (a.lat + b.lat) / 2, lon: (a.lon + b.lon) / 2 }) < rm * 0.4; })());
+      const resto = ws0.filter(w => !cruza(w));
+      if (resto.length && resto.length < ws0.length) ws = resto;
+    }
     const sig = new Map(), tienePrevio = new Set();
     ws.forEach(w => { for (let i = 0; i < w.nodes.length - 1; i++) { sig.set(w.nodes[i], w.nodes[i + 1]); tienePrevio.add(w.nodes[i + 1]); } });
     let inicio = ws[0].nodes[0];
@@ -1775,7 +1801,7 @@ function analizarRotondas(data) {
     if (!cerrado) {
       // A veces algún tramo del anillo está dibujado al revés en OSM: si sin importar el sentido
       // los tramos forman un anillo cerrado, se reconstruye y se orienta antihorario (circulación por la derecha).
-      const orden = anilloSinSentido(ws, coord);
+      const orden = anilloSinSentido(ws, coord) || anilloPolar(ws, coord);
       if (orden) { pos = new Map(orden.map((id, i) => [id, i])); cerrado = true; }
     }
     const L = pos.size;
@@ -1794,8 +1820,9 @@ function analizarRotondas(data) {
         [[1, ow !== -1, ow !== 1], [-1, ow !== 1, ow !== -1]].forEach(([dir, salida, entrada]) => {
           let j = i + dir, ref = null;
           while (j >= 0 && j < w.nodes.length) {
+            if (pos.has(w.nodes[j])) { ref = null; break; }      // vuelve al anillo: es un paso por el centro, no una salida
             const c = coord.get(w.nodes[j]);
-            if (c && !pos.has(w.nodes[j])) { ref = c; if (distancia(centro, c) > radio + 25) break; }
+            if (c) { ref = c; if (distancia(centro, c) > radio + 25) break; }
             j += dir;
           }
           if (!ref) return;
@@ -1857,6 +1884,28 @@ function anilloSinSentido(ws, coord) {
     area += a.lon * k * b.lat - b.lon * k * a.lat;
   }
   return area < 0 ? orden.reverse() : orden;   // área positiva = antihorario
+}
+
+// Último recurso (anillos cortados o con ramales, como un intercambiador con paso central): se toman los nodos
+// que forman el círculo exterior y se ordenan por ángulo alrededor del centro, en sentido antihorario.
+function anilloPolar(ws, coord) {
+  const ids = [...new Set(ws.flatMap(w => w.nodes))].filter(id => coord.get(id));
+  if (ids.length < 4) return null;
+  const pts = ids.map(id => coord.get(id));
+  const c = { lat: pts.reduce((a, p) => a + p.lat, 0) / pts.length, lon: pts.reduce((a, p) => a + p.lon, 0) / pts.length };
+  const ds = pts.map(p => distancia(c, p)).sort((a, b) => a - b), r = ds[Math.floor(ds.length / 2)];
+  const k = Math.cos(c.lat * RAD);
+  const borde = ids.map(id => ({ id, p: coord.get(id) })).filter(o => { const d = distancia(c, o.p); return d > r * 0.55 && d < r * 1.6; })
+    .map(o => ({ id: o.id, a: Math.atan2(o.p.lat - c.lat, (o.p.lon - c.lon) * k) }))
+    .sort((x, y) => x.a - y.a);
+  if (borde.length < 4) return null;
+  let hueco = 0;
+  for (let i = 0; i < borde.length; i++) {
+    const sig = i + 1 < borde.length ? borde[i + 1].a : borde[0].a + 2 * Math.PI;
+    hueco = Math.max(hueco, sig - borde[i].a);
+  }
+  if (hueco > 110 * RAD) return null;      // le falta un pedazo grande al anillo
+  return borde.map(o => o.id);             // ángulo creciente = antihorario
 }
 
 function lineasTramo(t) {

@@ -11,7 +11,7 @@ un diagrama de carriles y un texto grande.
 ```
 index.html        Interfaz: inicio, HUD, grabación y editor
 app.js            Motor: rutas, GPS, avisos, simulador, editor, rotondas OSM
-sw.js             Service Worker (v20): app sin conexión + caché del mapa ya visto
+sw.js             Service Worker (v21): app sin conexión + caché del mapa ya visto
 manifest.json     Instalación PWA
 icons/            íconos normales, maskable (Android), apple-touch y favicon
 lib/              Leaflet 1.9.4 local (leaflet.js, leaflet.css, images/)
@@ -63,6 +63,9 @@ deduce por qué calle se entra y por cuál se sale (si difiere del número que d
   rotonda no tiene forma real disponible, la vista previa dice por qué (sin respuesta de OSM, no hay rotonda mapeada,
   anillo incompleto o con ramales, el camino no coincide, sin entrada/salida identificada) y se usa el dibujo aproximado.
 - Anillos con tramos dibujados al revés en OSM se reconstruyen y se orientan en sentido antihorario.
+- Rotondas atravesadas por una avenida (intercambiadores como el de Chitré): la avenida que cruza por el centro no
+  cuenta como salida, aunque en OSM esté marcada como parte de la rotonda; los arcos del anillo cortados por el cruce
+  se unen y, si hace falta, el anillo se reconstruye por ángulo alrededor del centro.
 
 ## Conceptos
 
